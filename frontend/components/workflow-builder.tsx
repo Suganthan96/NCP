@@ -3,6 +3,8 @@
 import type React from "react"
 
 import { useState, useCallback, useRef } from "react"
+import { useAccount } from "wagmi"
+import { useRouter } from "next/navigation"
 import ReactFlow, {
   ReactFlowProvider,
   Background,
@@ -21,7 +23,7 @@ import ReactFlow, {
 import "reactflow/dist/style.css"
 import { toast } from "@/components/ui/use-toast"
 import { Button } from "@/components/ui/button"
-import { Save, Upload, Play } from "lucide-react"
+import { Save, Upload, Play, Trash2, RotateCcw } from "lucide-react"
 import NodeLibrary from "./node-library"
 import NodeConfigPanel from "./node-config-panel"
 import CustomEdge from "./custom-edge"
@@ -30,8 +32,33 @@ import { OutputNode } from "./nodes/output-node"
 import { ProcessNode } from "./nodes/process-node"
 import { ConditionalNode } from "./nodes/conditional-node"
 import { CodeNode } from "./nodes/code-node"
+import { ERC4337Node } from "./nodes/erc4337-node"
+import { WalletBalanceNode } from "./nodes/wallet-balance-node"
+import { ERC20TokensNode } from "./nodes/erc20-tokens-node"
+import { ERC721NFTNode } from "./nodes/erc721-nft-node"
+import { FetchPriceNode } from "./nodes/fetch-price-node"
+import { WalletAnalyticsNode } from "./nodes/wallet-analytics-node"
+import { TransferNode } from "./nodes/transfer-node"
+import { SwapNode } from "./nodes/swap-node"
 import { generateNodeId, createNode } from "@/lib/workflow-utils"
-import type { WorkflowNode } from "@/lib/types"
+import { saveAgent, generateAgentName, generateAgentDescription } from "@/lib/agents-utils"
+import type { WorkflowNode, Workflow } from "@/lib/types"
+
+// Create default nodes for the canvas
+const createAgentNode = () => createNode({
+  type: "erc4337",
+  position: { x: 400, y: 200 },
+  id: "agent-default"
+})
+
+const defaultNodes = [createAgentNode()]
+
+// Modify the Agent node label after creation
+defaultNodes[0].data.label = "Agent"
+defaultNodes[0].data.description = "AI Agent for Web3 operations"
+
+// No default edges - just one node
+const defaultEdges: any[] = []
 
 const nodeTypes: NodeTypes = {
   input: InputNode,
@@ -39,6 +66,14 @@ const nodeTypes: NodeTypes = {
   process: ProcessNode,
   conditional: ConditionalNode,
   code: CodeNode,
+  "erc4337": ERC4337Node,
+  "wallet-balance": WalletBalanceNode,
+  "erc20-tokens": ERC20TokensNode,
+  "erc721-nft": ERC721NFTNode,
+  "fetch-price": FetchPriceNode,
+  "wallet-analytics": WalletAnalyticsNode,
+  "transfer": TransferNode,
+  "swap": SwapNode,
 }
 
 const edgeTypes: EdgeTypes = {
@@ -47,10 +82,12 @@ const edgeTypes: EdgeTypes = {
 
 export default function WorkflowBuilder() {
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
-  const [nodes, setNodes, onNodesChange] = useNodesState([])
-  const [edges, setEdges, onEdgesChange] = useEdgesState([])
+  const [nodes, setNodes, onNodesChange] = useNodesState(defaultNodes)
+  const [edges, setEdges, onEdgesChange] = useEdgesState(defaultEdges)
   const [selectedNode, setSelectedNode] = useState<Node | null>(null)
   const [reactFlowInstance, setReactFlowInstance] = useState<any>(null)
+  const { address, isConnected } = useAccount()
+  const router = useRouter()
 
   const onConnect = useCallback(
     (params: Edge | Connection) => setEdges((eds) => addEdge({ ...params, type: "custom" }, eds)),
@@ -60,33 +97,44 @@ export default function WorkflowBuilder() {
   const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
     event.dataTransfer.dropEffect = "move"
+    console.log("Drag over event triggered")
   }, [])
 
   const onDrop = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
       event.preventDefault()
+      console.log("Drop event triggered")
 
       const reactFlowBounds = reactFlowWrapper.current?.getBoundingClientRect()
       const type = event.dataTransfer.getData("application/reactflow")
+      console.log("Dropped node type:", type)
 
       // Check if the dropped element is valid
       if (typeof type === "undefined" || !type) {
+        console.log("Invalid node type dropped")
         return
       }
 
       if (reactFlowBounds && reactFlowInstance) {
+        console.log("React flow instance available")
         const position = reactFlowInstance.screenToFlowPosition({
           x: event.clientX - reactFlowBounds.left,
           y: event.clientY - reactFlowBounds.top,
         })
+        console.log("Drop position:", position)
 
         const newNode = createNode({
           type,
           position,
           id: generateNodeId(type),
         })
+        console.log("Created new node:", newNode)
 
         setNodes((nds) => nds.concat(newNode))
+      } else {
+        console.log("Missing reactFlowBounds or reactFlowInstance")
+        console.log("reactFlowBounds:", reactFlowBounds)
+        console.log("reactFlowInstance:", reactFlowInstance)
       }
     },
     [reactFlowInstance, setNodes],
@@ -130,47 +178,54 @@ export default function WorkflowBuilder() {
       return
     }
 
-    const workflow = {
-      nodes,
-      edges,
-    }
-
-    const workflowString = JSON.stringify(workflow)
-    localStorage.setItem("workflow", workflowString)
-
-    toast({
-      title: "Workflow saved",
-      description: "Your workflow has been saved successfully",
-    })
-  }
-
-  const loadWorkflow = () => {
-    const savedWorkflow = localStorage.getItem("workflow")
-
-    if (!savedWorkflow) {
+    if (!isConnected) {
       toast({
-        title: "No saved workflow",
-        description: "There is no workflow saved in your browser",
+        title: "Wallet not connected",
+        description: "Please connect your wallet to save agents",
         variant: "destructive",
       })
       return
     }
 
+    const workflow: Workflow = {
+      nodes: nodes as WorkflowNode[],
+      edges,
+    }
+
     try {
-      const { nodes: savedNodes, edges: savedEdges } = JSON.parse(savedWorkflow)
-      setNodes(savedNodes)
-      setEdges(savedEdges)
-      toast({
-        title: "Workflow loaded",
-        description: "Your workflow has been loaded successfully",
+      const savedAgent = saveAgent({
+        name: generateAgentName(workflow),
+        description: generateAgentDescription(workflow),
+        workflow,
+        nodeCount: nodes.length,
+        status: "draft",
+        walletAddress: address,
       })
-    } catch (error) {
+
       toast({
-        title: "Error loading workflow",
-        description: "There was an error loading your workflow",
+        title: "Agent saved successfully!",
+        description: `"${savedAgent.name}" has been saved to your agents`,
+      })
+
+      // Redirect to agents page after a short delay
+      setTimeout(() => {
+        router.push('/agents')
+      }, 1500)
+
+    } catch (error) {
+      console.error("Error saving agent:", error)
+      toast({
+        title: "Error saving agent",
+        description: "There was an error saving your agent. Please try again.",
         variant: "destructive",
       })
     }
+  }
+
+  const loadWorkflow = () => {
+    // This function could be enhanced to load specific saved agents
+    // For now, we'll redirect to agents page where users can select an agent to edit
+    router.push('/agents')
   }
 
   const executeWorkflow = () => {
@@ -196,6 +251,28 @@ export default function WorkflowBuilder() {
         description: "Your workflow has been executed successfully",
       })
     }, 2000)
+  }
+
+  const clearCanvas = () => {
+    setNodes([])
+    setEdges([])
+    toast({
+      title: "Canvas cleared",
+      description: "All nodes and connections have been removed",
+    })
+  }
+
+  const resetToDefault = () => {
+    const agentNode = createAgentNode()
+    agentNode.data.label = "Agent"
+    agentNode.data.description = "AI Agent for Web3 operations"
+    
+    setNodes([agentNode])
+    setEdges([])
+    toast({
+      title: "Canvas reset",
+      description: "Canvas reset to default Agent node",
+    })
   }
 
   return (
@@ -230,19 +307,32 @@ export default function WorkflowBuilder() {
               <Controls />
               <MiniMap />
               <Panel position="top-right">
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
+                  <Button onClick={resetToDefault} size="sm" variant="outline">
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Reset Agent
+                  </Button>
+                  <Button onClick={clearCanvas} size="sm" variant="outline">
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Clear
+                  </Button>
                   <Button onClick={saveWorkflow} size="sm" variant="outline">
                     <Save className="h-4 w-4 mr-2" />
                     Save
                   </Button>
                   <Button onClick={loadWorkflow} size="sm" variant="outline">
                     <Upload className="h-4 w-4 mr-2" />
-                    Load
+                    My Agents
                   </Button>
                   <Button onClick={executeWorkflow} size="sm" variant="default">
                     <Play className="h-4 w-4 mr-2" />
                     Execute
                   </Button>
+                </div>
+              </Panel>
+              <Panel position="top-left">
+                <div className="text-xs bg-white p-2 rounded shadow">
+                  Debug: RF Instance: {reactFlowInstance ? 'Ready' : 'Not Ready'}
                 </div>
               </Panel>
             </ReactFlow>
