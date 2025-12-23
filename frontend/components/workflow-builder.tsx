@@ -86,6 +86,7 @@ export default function WorkflowBuilder() {
   const [edges, setEdges, onEdgesChange] = useEdgesState(defaultEdges)
   const [selectedNode, setSelectedNode] = useState<Node | null>(null)
   const [reactFlowInstance, setReactFlowInstance] = useState<any>(null)
+  const [smartAccounts, setSmartAccounts] = useState<Record<string, string>>({}) // Track smart accounts per node
   const { address, isConnected } = useAccount()
   const router = useRouter()
 
@@ -164,6 +165,14 @@ export default function WorkflowBuilder() {
           return node
         }),
       )
+      
+      // If smart account address is being set, track it
+      if (data.smartAccountAddress) {
+        setSmartAccounts(prev => ({
+          ...prev,
+          [nodeId]: data.smartAccountAddress,
+        }))
+      }
     },
     [setNodes],
   )

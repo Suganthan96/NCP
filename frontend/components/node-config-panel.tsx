@@ -205,6 +205,77 @@ export default function NodeConfigPanel({ node, updateNodeData, onClose }: NodeC
           </>
         )
 
+      case "erc4337":
+        return (
+          <>
+            <div className="space-y-2">
+              <Label htmlFor="smartAccountAddress">Smart Account Address</Label>
+              <Input
+                id="smartAccountAddress"
+                value={localData.smartAccountAddress || "Creating..."}
+                disabled
+                className="font-mono text-xs bg-gray-50"
+              />
+              <p className="text-xs text-gray-500">
+                {localData.smartAccountStatus === "created" 
+                  ? "✅ Smart account created successfully"
+                  : localData.smartAccountStatus === "creating"
+                  ? "⏳ Creating smart account..."
+                  : localData.smartAccountStatus === "error"
+                  ? "❌ Failed to create smart account"
+                  : "Smart account will be created automatically"}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="operation">Operation Type</Label>
+              <Select
+                value={localData.operation || "send-user-operation"}
+                onValueChange={(value) => handleChange("operation", value)}
+              >
+                <SelectTrigger id="operation">
+                  <SelectValue placeholder="Select operation" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="create-account">Create Account</SelectItem>
+                  <SelectItem value="send-user-operation">Send User Operation</SelectItem>
+                  <SelectItem value="estimate-gas">Estimate Gas</SelectItem>
+                  <SelectItem value="get-account-info">Get Account Info</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="bundlerUrl">Bundler URL (Optional)</Label>
+              <Input
+                id="bundlerUrl"
+                value={localData.bundlerUrl || ""}
+                onChange={(e) => handleChange("bundlerUrl", e.target.value)}
+                placeholder="https://bundler.example.com"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="paymasterUrl">Paymaster URL (Optional)</Label>
+              <Input
+                id="paymasterUrl"
+                value={localData.paymasterUrl || ""}
+                onChange={(e) => handleChange("paymasterUrl", e.target.value)}
+                placeholder="https://paymaster.example.com"
+              />
+            </div>
+
+            <div className="bg-blue-50 p-3 rounded-lg border border-blue-200 mt-4">
+              <p className="text-xs text-blue-900 font-semibold mb-2">🎯 Smart Account Info</p>
+              <p className="text-xs text-gray-700">
+                This node has an ERC-4337 smart account that can execute operations
+                independently. Connect other nodes below this to define what actions
+                this smart account can perform.
+              </p>
+            </div>
+          </>
+        )
+
       default:
         return null
     }

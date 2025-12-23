@@ -8,6 +8,7 @@ import json
 import requests
 import uvicorn
 from groq import Groq
+import re
 
 load_dotenv()
 
@@ -34,143 +35,172 @@ except Exception as e:
     print(f"Warning: Failed to initialize Groq client: {e}")
     groq_client = None
 
-# Tool Definitions for Web3 Operations
+# Store user data for context (in production, use a proper database)
+user_data = {}
+
+# Tool Definitions for Web3 Operations using External APIs
 TOOL_DEFINITIONS = {
-    "erc4337": {
-        "name": "erc4337",
-        "description": "Create and manage ERC-4337 smart accounts. Handles account abstraction operations.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "operation": {"type": "string", "enum": ["create", "execute", "check_status"], "description": "Operation to perform"},
-                "bundlerUrl": {"type": "string", "description": "Bundler URL for ERC-4337 operations"},
-                "paymasterUrl": {"type": "string", "description": "Paymaster URL for gas sponsorship"},
-                "userOperation": {"type": "object", "description": "User operation data for execution"}
-            },
-            "required": ["operation"]
-        },
-        "endpoint": "https://api.example.com/erc4337",
-        "method": "POST"
-    },
-    "wallet_balance": {
-        "name": "wallet_balance",
-        "description": "Get wallet balance for ETH and tokens. Supports multiple currencies and USD conversion.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "address": {"type": "string", "description": "Wallet address to check balance"},
-                "currency": {"type": "string", "default": "ETH", "description": "Currency type (ETH, USDC, etc.)"},
-                "includeUsd": {"type": "boolean", "default": True, "description": "Include USD value conversion"}
-            },
-            "required": ["address"]
-        },
-        "endpoint": "https://api.example.com/balance/{address}",
-        "method": "GET"
-    },
-    "erc20_tokens": {
-        "name": "erc20_tokens",
-        "description": "Handle ERC-20 token operations including transfers, approvals, and balance checks.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "operation": {"type": "string", "enum": ["transfer", "approve", "balance", "allowance"], "description": "Token operation"},
-                "contractAddress": {"type": "string", "description": "Token contract address"},
-                "fromAddress": {"type": "string", "description": "Sender address"},
-                "toAddress": {"type": "string", "description": "Recipient address"},
-                "amount": {"type": "string", "description": "Amount of tokens"},
-                "privateKey": {"type": "string", "description": "Private key for signing transactions"}
-            },
-            "required": ["operation", "contractAddress"]
-        },
-        "endpoint": "https://api.example.com/erc20",
-        "method": "POST"
-    },
-    "erc721_nft": {
-        "name": "erc721_nft",
-        "description": "Handle NFT operations including minting, transferring, and metadata management.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "operation": {"type": "string", "enum": ["mint", "transfer", "approve", "metadata", "owner"], "description": "NFT operation"},
-                "contractAddress": {"type": "string", "description": "NFT contract address"},
-                "tokenId": {"type": "string", "description": "Token ID for specific NFT"},
-                "fromAddress": {"type": "string", "description": "Current owner address"},
-                "toAddress": {"type": "string", "description": "Recipient address"},
-                "metadata": {"type": "object", "description": "NFT metadata"},
-                "privateKey": {"type": "string", "description": "Private key for signing transactions"}
-            },
-            "required": ["operation", "contractAddress"]
-        },
-        "endpoint": "https://api.example.com/erc721",
-        "method": "POST"
-    },
-    "fetch_price": {
-        "name": "fetch_price",
-        "description": "Fetch real-time cryptocurrency and token prices with 24h change data.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "tokenAddress": {"type": "string", "description": "Token contract address"},
-                "symbol": {"type": "string", "description": "Token symbol (BTC, ETH, etc.)"},
-                "vsCurrency": {"type": "string", "default": "usd", "description": "Price comparison currency"},
-                "include24hChange": {"type": "boolean", "default": True, "description": "Include 24h price change"}
-            }
-        },
-        "endpoint": "https://api.coingecko.com/api/v3/simple/price",
-        "method": "GET"
-    },
-    "wallet_analytics": {
-        "name": "wallet_analytics",
-        "description": "Analyze wallet transaction history, token holdings, and activity patterns.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "address": {"type": "string", "description": "Wallet address to analyze"},
-                "timeframe": {"type": "string", "enum": ["7d", "30d", "90d", "1y"], "default": "30d", "description": "Analysis timeframe"},
-                "includeTokens": {"type": "boolean", "default": True, "description": "Include token analysis"},
-                "includeNFTs": {"type": "boolean", "default": True, "description": "Include NFT analysis"}
-            },
-            "required": ["address"]
-        },
-        "endpoint": "https://api.example.com/analytics/{address}",
-        "method": "GET"
-    },
     "transfer": {
         "name": "transfer",
-        "description": "Transfer ETH or tokens between addresses with gas optimization.",
+        "description": "Transfer tokens from one address to another. Requires privateKey, toAddress, amount, and tokenAddress.",
         "parameters": {
             "type": "object",
             "properties": {
-                "fromAddress": {"type": "string", "description": "Sender address"},
-                "toAddress": {"type": "string", "description": "Recipient address"},
-                "amount": {"type": "string", "description": "Amount to transfer"},
-                "tokenType": {"type": "string", "enum": ["ETH", "ERC20"], "default": "ETH", "description": "Type of asset to transfer"},
-                "tokenAddress": {"type": "string", "description": "Token contract address (for ERC20)"},
-                "gasLimit": {"type": "string", "default": "21000", "description": "Gas limit for transaction"},
-                "privateKey": {"type": "string", "description": "Private key for signing transaction"}
+                "privateKey": {"type": "string", "description": "Private key of the sender wallet"},
+                "toAddress": {"type": "string", "description": "Recipient wallet address"},
+                "amount": {"type": "string", "description": "Amount of tokens to transfer"},
+                "tokenAddress": {"type": "string", "description": "Contract address of the token"}
             },
-            "required": ["fromAddress", "toAddress", "amount", "privateKey"]
+            "required": ["privateKey", "toAddress", "amount", "tokenAddress"]
         },
-        "endpoint": "https://api.example.com/transfer",
+        "endpoint": "http://localhost:3000/api/transfer",
         "method": "POST"
     },
     "swap": {
         "name": "swap",
-        "description": "Swap tokens via DEX protocols with slippage protection.",
+        "description": "Swap one token for another. Requires privateKey, tokenIn, tokenOut, amountIn, and slippageTolerance.",
         "parameters": {
             "type": "object",
             "properties": {
-                "fromToken": {"type": "string", "description": "Input token address or symbol"},
-                "toToken": {"type": "string", "description": "Output token address or symbol"},
-                "fromAmount": {"type": "string", "description": "Amount of input tokens"},
-                "slippage": {"type": "string", "default": "0.5", "description": "Slippage tolerance percentage"},
-                "dexProtocol": {"type": "string", "enum": ["uniswap", "sushiswap", "1inch"], "default": "uniswap", "description": "DEX protocol to use"},
-                "userAddress": {"type": "string", "description": "User wallet address"},
-                "privateKey": {"type": "string", "description": "Private key for signing transaction"}
+                "privateKey": {"type": "string", "description": "Private key of the wallet"},
+                "tokenIn": {"type": "string", "description": "Input token contract address"},
+                "tokenOut": {"type": "string", "description": "Output token contract address"},
+                "amountIn": {"type": "string", "description": "Amount of input tokens"},
+                "slippageTolerance": {"type": "number", "description": "Slippage tolerance percentage"}
             },
-            "required": ["fromToken", "toToken", "fromAmount", "userAddress", "privateKey"]
+            "required": ["privateKey", "tokenIn", "tokenOut", "amountIn", "slippageTolerance"]
         },
-        "endpoint": "https://api.example.com/swap",
+        "endpoint": "http://localhost:3000/api/swap",
+        "method": "POST"
+    },
+    "get_balance": {
+        "name": "get_balance",
+        "description": "Get STT balance of a wallet address. Requires only the wallet address.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "address": {"type": "string", "description": "Wallet address to check balance"}
+            },
+            "required": ["address"]
+        },
+        "endpoint": "http://localhost:3000/api/balance/{address}",
+        "method": "GET"
+    },
+    "deploy_erc20": {
+        "name": "deploy_erc20",
+        "description": "Deploy a new ERC-20 token. Requires privateKey, name, symbol, and initialSupply.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "privateKey": {"type": "string", "description": "Private key of the deployer wallet"},
+                "name": {"type": "string", "description": "Token name"},
+                "symbol": {"type": "string", "description": "Token symbol"},
+                "initialSupply": {"type": "string", "description": "Initial token supply"}
+            },
+            "required": ["privateKey", "name", "symbol", "initialSupply"]
+        },
+        "endpoint": "http://localhost:3000/api/deploy-token",
+        "method": "POST"
+    },
+    "deploy_erc721": {
+        "name": "deploy_erc721",
+        "description": "Deploy a new ERC-721 NFT collection. Requires privateKey, name, and symbol.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "privateKey": {"type": "string", "description": "Private key of the deployer wallet"},
+                "name": {"type": "string", "description": "NFT collection name"},
+                "symbol": {"type": "string", "description": "NFT collection symbol"}
+            },
+            "required": ["privateKey", "name", "symbol"]
+        },
+        "endpoint": "http://localhost:3000/api/create-nft-collection",
+        "method": "POST"
+    },
+    "create_dao": {
+        "name": "create_dao",
+        "description": "Create a new DAO (Decentralized Autonomous Organization). Requires privateKey, name, votingPeriod, and quorumPercentage.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "privateKey": {"type": "string", "description": "Private key of the DAO creator"},
+                "name": {"type": "string", "description": "DAO name"},
+                "votingPeriod": {"type": "string", "description": "Voting period in seconds"},
+                "quorumPercentage": {"type": "string", "description": "Quorum percentage required for voting"}
+            },
+            "required": ["privateKey", "name", "votingPeriod", "quorumPercentage"]
+        },
+        "endpoint": "http://localhost:3000/api/create-dao",
+        "method": "POST"
+    },
+    "airdrop": {
+        "name": "airdrop",
+        "description": "Airdrop tokens to multiple recipients. Requires privateKey, recipients (list of addresses), and amount per recipient.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "privateKey": {"type": "string", "description": "Private key of the sender wallet"},
+                "recipients": {"type": "array", "items": {"type": "string"}, "description": "List of recipient wallet addresses"},
+                "amount": {"type": "string", "description": "Amount to send to each recipient"}
+            },
+            "required": ["privateKey", "recipients", "amount"]
+        },
+        "endpoint": "http://localhost:3000/api/airdrop",
+        "method": "POST"
+    },
+    "fetch_price": {
+        "name": "fetch_price",
+        "description": "Fetch the current price of any cryptocurrency or token. Requires a query string.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Query string for token price (e.g., 'bitcoin current price')"}
+            },
+            "required": ["query"]
+        },
+        "endpoint": "http://localhost:3000/api/token-price",
+        "method": "POST"
+    },
+    "deposit_yield": {
+        "name": "deposit_yield",
+        "description": "Create a deposit with yield prediction. Requires privateKey, tokenAddress, depositAmount, and apyPercent.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "privateKey": {"type": "string", "description": "Private key of the depositor wallet"},
+                "tokenAddress": {"type": "string", "description": "Token contract address to deposit"},
+                "depositAmount": {"type": "string", "description": "Amount to deposit"},
+                "apyPercent": {"type": "number", "description": "Annual Percentage Yield (APY) percentage"}
+            },
+            "required": ["privateKey", "tokenAddress", "depositAmount", "apyPercent"]
+        },
+        "endpoint": "http://localhost:3000/api/yield",
+        "method": "POST"
+    },
+    "wallet_analytics": {
+        "name": "wallet_analytics",
+        "description": "Get wallet analytics including ERC-20 token balances. Requires wallet address.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "address": {"type": "string", "description": "Wallet address to analyze"}
+            },
+            "required": ["address"]
+        },
+        "endpoint": "http://localhost:3000/api/address/{address}/balance/erc20",
+        "method": "GET"
+    },
+    "create_smart_account": {
+        "name": "create_smart_account",
+        "description": "Create a new ERC-4337 smart account. Requires wallet address.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "address": {"type": "string", "description": "Wallet address to create smart account for"}
+            },
+            "required": ["address"]
+        },
+        "endpoint": "http://localhost:3000/api/create-smart-account",
         "method": "POST"
     }
 }
@@ -271,124 +301,118 @@ RESPONSE FORMAT:
     return system_prompt
 
 def execute_tool(tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
-    """Execute a Web3 tool by calling its API endpoint"""
-    
-    if tool_name not in TOOL_DEFINITIONS:
-        raise ValueError(f"Unknown tool: {tool_name}")
-    
-    tool_def = TOOL_DEFINITIONS[tool_name]
-    endpoint = tool_def["endpoint"]
-    method = tool_def["method"]
-    
-    # Handle URL parameters for GET requests
-    if "{address}" in endpoint:
-        if "address" in parameters:
-            endpoint = endpoint.replace("{address}", parameters["address"])
-            # Don't include address in POST body for GET requests
-            if method == "GET":
-                parameters = {k: v for k, v in parameters.items() if k != "address"}
-    
-    headers = {"Content-Type": "application/json"}
+    """Execute a Web3 tool by calling its real API endpoint"""
     
     try:
-        if method == "POST":
-            # For demo purposes, simulate API responses
-            simulated_result = simulate_web3_operation(tool_name, parameters)
+        if tool_name not in TOOL_DEFINITIONS:
             return {
-                "success": True,
-                "tool": tool_name,
-                "result": simulated_result,
-                "timestamp": "2025-12-23T16:20:00Z"
+                "success": False,
+                "error": f"Unknown tool: {tool_name}"
             }
-        elif method == "GET":
-            # Simulate GET operation
-            simulated_result = simulate_web3_operation(tool_name, parameters)
+        
+        tool_def = TOOL_DEFINITIONS[tool_name]
+        endpoint = tool_def["endpoint"]
+        method = tool_def["method"]
+        
+        print(f"Executing tool: {tool_name} with parameters: {parameters}")
+        
+        # Handle URL parameters for GET requests
+        if "{address}" in endpoint:
+            if "address" in parameters:
+                endpoint = endpoint.replace("{address}", parameters["address"])
+                # Don't include address in POST body for GET requests
+                if method == "GET":
+                    parameters = {k: v for k, v in parameters.items() if k != "address"}
+        
+        headers = {"Content-Type": "application/json"}
+        
+        try:
+            if method == "POST":
+                print(f"Making POST request to: {endpoint}")
+                response = requests.post(endpoint, json=parameters, headers=headers, timeout=30)
+                print(f"Response status: {response.status_code}")
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return {
+                        "success": True,
+                        "tool": tool_name,
+                        "result": result,
+                        "endpoint": endpoint
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "tool": tool_name,
+                        "error": f"API returned status {response.status_code}: {response.text}",
+                        "endpoint": endpoint
+                    }
+                    
+            elif method == "GET":
+                print(f"Making GET request to: {endpoint}")
+                response = requests.get(endpoint, params=parameters, headers=headers, timeout=30)
+                print(f"Response status: {response.status_code}")
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return {
+                        "success": True,
+                        "tool": tool_name,
+                        "result": result,
+                        "endpoint": endpoint
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "tool": tool_name,
+                        "error": f"API returned status {response.status_code}: {response.text}",
+                        "endpoint": endpoint
+                    }
+            else:
+                return {
+                    "success": False,
+                    "tool": tool_name,
+                    "error": f"Unsupported HTTP method: {method}"
+                }
+                
+        except requests.exceptions.Timeout:
             return {
-                "success": True,
+                "success": False,
                 "tool": tool_name,
-                "result": simulated_result,
-                "timestamp": "2025-12-23T16:20:00Z"
+                "error": "API request timed out after 30 seconds"
             }
-        else:
-            raise ValueError(f"Unsupported HTTP method: {method}")
+        except requests.exceptions.RequestException as e:
+            return {
+                "success": False,
+                "tool": tool_name,
+                "error": f"Network error: {str(e)}"
+            }
             
     except Exception as e:
         return {
             "success": False,
             "tool": tool_name,
-            "error": str(e)
+            "error": f"Execution failed: {str(e)}"
         }
 
-def simulate_web3_operation(tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
-    """Simulate Web3 operations for demo purposes"""
+# Helper function to extract addresses and amounts from natural language
+def extract_transfer_params(message: str) -> Dict[str, str]:
+    """Extract transfer parameters from natural language"""
+    # Pattern for Ethereum addresses (0x followed by 40 hex chars)
+    address_pattern = r'0x[a-fA-F0-9]{40}'
+    # Pattern for amounts (decimal numbers)
+    amount_pattern = r'(\d+(?:\.\d+)?)\s*(eth|ETH)'
     
-    if tool_name == "erc4337":
-        return {
-            "accountAddress": "0x1234...5678",
-            "bundlerTxHash": "0xabc123...",
-            "status": "deployed",
-            "gasUsed": "250000"
-        }
-    elif tool_name == "wallet_balance":
-        return {
-            "address": parameters.get("address", "0x..."),
-            "balance": "1.25",
-            "currency": parameters.get("currency", "ETH"),
-            "usdValue": "2500.50",
-            "lastUpdated": "2025-12-23T16:20:00Z"
-        }
-    elif tool_name == "erc20_tokens":
-        return {
-            "operation": parameters.get("operation"),
-            "txHash": "0xdef456...",
-            "status": "confirmed",
-            "gasUsed": "65000",
-            "tokenAmount": parameters.get("amount", "0")
-        }
-    elif tool_name == "erc721_nft":
-        return {
-            "operation": parameters.get("operation"),
-            "tokenId": parameters.get("tokenId", "1"),
-            "txHash": "0xghi789...",
-            "metadata": {"name": "Demo NFT", "image": "https://example.com/nft.png"}
-        }
-    elif tool_name == "fetch_price":
-        return {
-            "symbol": parameters.get("symbol", "ETH"),
-            "priceUsd": "2000.50",
-            "priceChange24h": "+2.5%",
-            "lastFetched": "2025-12-23T16:20:00Z"
-        }
-    elif tool_name == "wallet_analytics":
-        return {
-            "address": parameters.get("address"),
-            "totalTransactions": 150,
-            "totalValue": "25000.75",
-            "topTokens": ["USDC", "LINK", "UNI"],
-            "nftCount": 5,
-            "riskScore": "LOW"
-        }
-    elif tool_name == "transfer":
-        return {
-            "txHash": "0xjkl012...",
-            "fromAddress": parameters.get("fromAddress"),
-            "toAddress": parameters.get("toAddress"),
-            "amount": parameters.get("amount"),
-            "gasUsed": "21000",
-            "status": "confirmed"
-        }
-    elif tool_name == "swap":
-        return {
-            "txHash": "0xmno345...",
-            "fromToken": parameters.get("fromToken"),
-            "toToken": parameters.get("toToken"),
-            "fromAmount": parameters.get("fromAmount"),
-            "toAmount": "1850.25",
-            "slippage": "0.3%",
-            "gasUsed": "180000"
-        }
+    addresses = re.findall(address_pattern, message)
+    amounts = re.findall(amount_pattern, message)
     
-    return {"status": "executed", "parameters": parameters}
+    result = {}
+    if addresses:
+        result['to_address'] = addresses[0]  # First address found
+    if amounts:
+        result['amount'] = amounts[0][0]  # First amount found
+    
+    return result
 
 def get_groq_tools(tool_names: List[str]) -> List[Dict[str, Any]]:
     """Convert tool definitions to Groq function calling format"""
@@ -649,26 +673,196 @@ def extract_dependencies(code: str, language: str) -> List[str]:
 async def chat_with_agent_simple(request: AgentRequest):
     """
     Chat endpoint that handles both simple messages and workflow-based agent requests.
+    Supports function calling for real Web3 operations via external APIs.
     """
     try:
         print(f"Received chat request: {request.user_message}")
         print(f"Tools: {[tool.tool for tool in request.tools] if request.tools else 'None'}")
         
-        # Build system prompt based on tools
-        if request.tools:
-            system_prompt = build_system_prompt(request.tools)
-        else:
-            # Default Web3 assistant prompt
-            system_prompt = """You are a helpful Web3 AI assistant. You can help users with:
-- Checking wallet balances and information
-- Token operations and information  
-- NFT operations and information
-- DeFi protocols and concepts
-- General blockchain and cryptocurrency questions
-
-Always be helpful and provide clear explanations."""
-
-        # Process the conversation with Groq
+        # Extract user ID for context management
+        user_id = getattr(request, 'user_id', 'default_user')
+        
+        # Check if user wants to check balance
+        if any(word in request.user_message.lower() for word in ["balance", "check balance", "how much"]):
+            # Try to extract address from message
+            address_match = re.search(r'0x[a-fA-F0-9]{40}', request.user_message)
+            if address_match:
+                address = address_match.group(0)
+                result = execute_tool("get_balance", {"address": address})
+                
+                if result["success"]:
+                    balance_info = result["result"]
+                    return {
+                        "agent_response": f"💰 **Wallet Balance**\n\nAddress: `{address}`\nBalance: **{balance_info.get('balance', 'N/A')} STT**\n\nNetwork: Somnia",
+                        "tool_calls": [{"tool": "get_balance", "parameters": {"address": address}}],
+                        "results": [result]
+                    }
+                else:
+                    return {
+                        "agent_response": f"❌ Failed to get balance: {result['error']}",
+                        "tool_calls": [],
+                        "results": [result]
+                    }
+            else:
+                return {
+                    "agent_response": "I need a wallet address to check the balance. Please provide an address like:\n`Check balance for 0x1234567890123456789012345678901234567890`",
+                    "tool_calls": [],
+                    "results": []
+                }
+        
+        # Check if user wants to create smart account
+        if any(word in request.user_message.lower() for word in ["smart account", "create smart", "erc-4337", "erc4337"]):
+            # Try to extract address from message
+            address_match = re.search(r'0x[a-fA-F0-9]{40}', request.user_message)
+            if address_match:
+                address = address_match.group(0)
+                result = execute_tool("create_smart_account", {"address": address})
+                
+                if result["success"]:
+                    account_info = result["result"]
+                    return {
+                        "agent_response": f"🔐 **Smart Account Created!**\n\n👤 Owner: `{address}`\n📍 Smart Account: `{account_info.get('smartAccountAddress', 'N/A')}`\n🌐 Network: Ethereum\n\n✅ Your smart account is ready for advanced operations like gasless transactions and account abstraction features!",
+                        "tool_calls": [{"tool": "create_smart_account", "parameters": {"address": address}}],
+                        "results": [result]
+                    }
+                else:
+                    return {
+                        "agent_response": f"❌ Failed to create smart account: {result['error']}",
+                        "tool_calls": [],
+                        "results": [result]
+                    }
+            else:
+                return {
+                    "agent_response": "I need a wallet address to create a smart account. Please provide an address like:\n`Create smart account for 0x1234567890123456789012345678901234567890`",
+                    "tool_calls": [],
+                    "results": []
+                }
+        
+        # Check if user wants to transfer tokens
+        if any(word in request.user_message.lower() for word in ["transfer", "send"]):
+            # Extract transfer parameters
+            address_matches = re.findall(r'0x[a-fA-F0-9]{40}', request.user_message)
+            amount_match = re.search(r'(\d+(?:\.\d+)?)', request.user_message)
+            
+            if len(address_matches) >= 2 and amount_match:  # Need recipient address and token address
+                to_address = address_matches[0]  # First address is recipient
+                token_address = address_matches[1] if len(address_matches) > 1 else "0x0000000000000000000000000000000000000000"  # Default STT token
+                amount = amount_match.group(1)
+                
+                if not request.private_key:
+                    return {
+                        "agent_response": "I need your private key to execute the transfer. Please provide it securely in the request.",
+                        "tool_calls": [],
+                        "results": []
+                    }
+                
+                transfer_params = {
+                    "privateKey": request.private_key,
+                    "toAddress": to_address,
+                    "amount": amount,
+                    "tokenAddress": token_address
+                }
+                
+                result = execute_tool("transfer", transfer_params)
+                
+                if result["success"]:
+                    tx_info = result["result"]
+                    return {
+                        "agent_response": f"✅ **Transfer Successful!**\n\n💸 Amount: **{amount} tokens**\n📍 To: `{to_address}`\n🔗 Transaction: `{tx_info.get('transactionHash', 'N/A')}`\n🌐 Network: Somnia",
+                        "tool_calls": [{"tool": "transfer", "parameters": transfer_params}],
+                        "results": [result]
+                    }
+                else:
+                    return {
+                        "agent_response": f"❌ Transfer failed: {result['error']}",
+                        "tool_calls": [],
+                        "results": [result]
+                    }
+            else:
+                return {
+                    "agent_response": "I need more information for the transfer. Please provide:\n- Recipient address\n- Token address (optional, defaults to STT)\n- Amount\n\nExample: `Transfer 10 to 0x1234567890123456789012345678901234567890`",
+                    "tool_calls": [],
+                    "results": []
+                }
+        
+        # Check if user wants to swap tokens
+        if any(word in request.user_message.lower() for word in ["swap", "exchange"]):
+            # Extract swap parameters (simplified)
+            addresses = re.findall(r'0x[a-fA-F0-9]{40}', request.user_message)
+            amount_match = re.search(r'(\d+(?:\.\d+)?)', request.user_message)
+            
+            if len(addresses) >= 2 and amount_match:
+                token_in = addresses[0]
+                token_out = addresses[1]
+                amount_in = amount_match.group(1)
+                
+                if not request.private_key:
+                    return {
+                        "agent_response": "I need your private key to execute the swap. Please provide it securely in the request.",
+                        "tool_calls": [],
+                        "results": []
+                    }
+                
+                swap_params = {
+                    "privateKey": request.private_key,
+                    "tokenIn": token_in,
+                    "tokenOut": token_out,
+                    "amountIn": amount_in,
+                    "slippageTolerance": 0.5
+                }
+                
+                result = execute_tool("swap", swap_params)
+                
+                if result["success"]:
+                    swap_info = result["result"]
+                    return {
+                        "agent_response": f"🔄 **Swap Successful!**\n\n💰 Swapped: **{amount_in} tokens**\n🔁 From: `{token_in}`\n🔁 To: `{token_out}`\n🔗 Transaction: `{swap_info.get('transactionHash', 'N/A')}`",
+                        "tool_calls": [{"tool": "swap", "parameters": swap_params}],
+                        "results": [result]
+                    }
+                else:
+                    return {
+                        "agent_response": f"❌ Swap failed: {result['error']}",
+                        "tool_calls": [],
+                        "results": [result]
+                    }
+            else:
+                return {
+                    "agent_response": "For token swaps, please provide:\n- Token A address (from)\n- Token B address (to)\n- Amount\n\nExample: `Swap 100 from 0x1234... to 0x5678...`",
+                    "tool_calls": [],
+                    "results": []
+                }
+        
+        # Check if user wants price information
+        if any(word in request.user_message.lower() for word in ["price", "cost", "value"]):
+            # Extract token name or symbol
+            tokens = ["bitcoin", "ethereum", "btc", "eth", "usdt", "usdc"]
+            query = None
+            for token in tokens:
+                if token in request.user_message.lower():
+                    query = f"{token} current price"
+                    break
+            
+            if not query:
+                query = request.user_message  # Use full message as query
+            
+            result = execute_tool("fetch_price", {"query": query})
+            
+            if result["success"]:
+                price_info = result["result"]
+                return {
+                    "agent_response": f"💎 **Price Information**\n\n{price_info.get('response', 'Price data retrieved successfully')}",
+                    "tool_calls": [{"tool": "fetch_price", "parameters": {"query": query}}],
+                    "results": [result]
+                }
+            else:
+                return {
+                    "agent_response": f"❌ Failed to fetch price: {result['error']}",
+                    "tool_calls": [],
+                    "results": [result]
+                }
+        
+        # For general Web3 questions, use Groq AI
         if not groq_client:
             return {
                 "agent_response": "AI service temporarily unavailable. Please try again later.",
@@ -677,7 +871,49 @@ Always be helpful and provide clear explanations."""
             }
         
         try:
-            # Simple conversation without complex tools for now
+            # Enhanced system prompt with function calling capabilities
+            system_prompt = """You are a Web3 AI assistant with real blockchain capabilities on the Somnia network. You can:
+
+🏦 **ACCOUNT OPERATIONS**: 
+   - Check wallet balances: "Check balance for 0x..."
+   - Get wallet analytics and token holdings
+   
+💸 **TOKEN OPERATIONS**: 
+   - Transfer tokens: "Transfer [amount] to 0x..."
+   - Token swaps: "Swap [amount] from 0x... to 0x..."
+   - Deploy ERC-20 tokens: "Deploy token named [name] with symbol [symbol]"
+   
+🎨 **NFT OPERATIONS**: 
+   - Deploy NFT collections: "Create NFT collection [name]"
+   - Manage NFT operations
+   
+🏛️ **ADVANCED FEATURES**:
+   - Create DAOs: "Create DAO named [name]"
+   - Airdrop tokens: "Airdrop [amount] to [addresses]"
+   - Yield farming deposits
+   
+� **SMART ACCOUNT OPERATIONS**:
+   - Create ERC-4337 smart accounts: "Create smart account for 0x..."
+   - Enable gasless transactions and account abstraction
+   
+�💎 **PRICE DATA**: 
+   - Get real-time prices: "What's the price of Bitcoin?"
+   
+**IMPORTANT NOTES**:
+- All operations use the Somnia blockchain network
+- Transfers require a private key for security
+- I can execute real transactions and return transaction hashes
+- Always provide clear addresses and amounts for operations
+
+Available commands:
+- Balance check: "Check balance for [address]"
+- Transfer: "Transfer [amount] to [address]"
+- Swap: "Swap [amount] from [token1] to [token2]"
+- Smart account: "Create smart account for [address]"
+- Price: "What's the price of [token]?"
+
+How can I help you with blockchain operations today?"""
+            
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": request.user_message}
@@ -688,7 +924,7 @@ Always be helpful and provide clear explanations."""
             # Call Groq API
             chat_completion = groq_client.chat.completions.create(
                 messages=messages,
-                model="llama-3.1-70b-versatile",
+                model="llama-3.1-70b-versatile", 
                 temperature=0.7,
                 max_tokens=1000
             )
@@ -858,4 +1094,5 @@ async def root():
     }
 
 if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
     uvicorn.run(app, host="0.0.0.0", port=8000)
