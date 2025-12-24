@@ -2,7 +2,7 @@ import type React from "react"
 import { Handle, Position, useReactFlow } from "reactflow"
 import { Shield, CheckCircle, Loader2, AlertCircle } from "lucide-react"
 import { useSmartAccount } from "@/hooks/useSmartAccount"
-import { useEffect } from "react"
+import { useEffect, useCallback, useRef } from "react"
 
 interface ERC4337NodeData {
   label: string
@@ -16,55 +16,49 @@ interface ERC4337NodeData {
 export function ERC4337Node({ data, id }: { data: ERC4337NodeData; id: string }) {
   const { smartAccount, address, isCreating, error } = useSmartAccount(id);
   const { setNodes } = useReactFlow();
+  const updateScheduledRef = useRef(false);
 
-  // Update node data when smart account is created
+  // Update node data when smart account is created - use setTimeout to avoid render errors
   useEffect(() => {
-    if (address && !data.smartAccountAddress) {
-      setNodes((nds) =>
-        nds.map((node) => {
-          if (node.id === id) {
-            return {
-              ...node,
-              data: {
-                ...node.data,
-                smartAccountAddress: address,
-                smartAccountStatus: "created",
-              },
-            };
-          }
-          return node;
-        })
-      );
-    } else if (error && data.smartAccountStatus !== "error") {
-      setNodes((nds) =>
-        nds.map((node) => {
-          if (node.id === id) {
-            return {
-              ...node,
-              data: {
-                ...node.data,
-                smartAccountStatus: "error",
-              },
-            };
-          }
-          return node;
-        })
-      );
-    } else if (isCreating && data.smartAccountStatus !== "creating") {
-      setNodes((nds) =>
-        nds.map((node) => {
-          if (node.id === id) {
-            return {
-              ...node,
-              data: {
-                ...node.data,
-                smartAccountStatus: "creating",
-              },
-            };
-          }
-          return node;
-        })
-      );
+    if (updateScheduledRef.current) return;
+
+    const needsUpdate = 
+      (address && !data.smartAccountAddress) ||
+      (error && data.smartAccountStatus !== "error") ||
+      (isCreating && data.smartAccountStatus !== "creating");
+
+    if (needsUpdate) {
+      updateScheduledRef.current = true;
+      
+      // Schedule the update for next tick to avoid updating during render
+      setTimeout(() => {
+        setNodes((nds) =>
+          nds.map((node) => {
+            if (node.id === id) {
+              const updates: Partial<ERC4337NodeData> = {};
+              
+              if (address && !node.data.smartAccountAddress) {
+                updates.smartAccountAddress = address;
+                updates.smartAccountStatus = "created";
+              } else if (error) {
+                updates.smartAccountStatus = "error";
+              } else if (isCreating) {
+                updates.smartAccountStatus = "creating";
+              }
+
+              return {
+                ...node,
+                data: {
+                  ...node.data,
+                  ...updates,
+                },
+              };
+            }
+            return node;
+          })
+        );
+        updateScheduledRef.current = false;
+      }, 0);
     }
   }, [address, isCreating, error, id, setNodes, data.smartAccountAddress, data.smartAccountStatus]);
 

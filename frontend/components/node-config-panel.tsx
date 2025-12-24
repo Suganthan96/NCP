@@ -212,16 +212,16 @@ export default function NodeConfigPanel({ node, updateNodeData, onClose }: NodeC
               <Label htmlFor="smartAccountAddress">Smart Account Address</Label>
               <Input
                 id="smartAccountAddress"
-                value={localData.smartAccountAddress || "Creating..."}
+                value={(localData as any).smartAccountAddress || "Creating..."}
                 disabled
                 className="font-mono text-xs bg-gray-50"
               />
               <p className="text-xs text-gray-500">
-                {localData.smartAccountStatus === "created" 
+                {(localData as any).smartAccountStatus === "created" 
                   ? "✅ Smart account created successfully"
-                  : localData.smartAccountStatus === "creating"
+                  : (localData as any).smartAccountStatus === "creating"
                   ? "⏳ Creating smart account..."
-                  : localData.smartAccountStatus === "error"
+                  : (localData as any).smartAccountStatus === "error"
                   ? "❌ Failed to create smart account"
                   : "Smart account will be created automatically"}
               </p>
@@ -230,7 +230,7 @@ export default function NodeConfigPanel({ node, updateNodeData, onClose }: NodeC
             <div className="space-y-2">
               <Label htmlFor="operation">Operation Type</Label>
               <Select
-                value={localData.operation || "send-user-operation"}
+                value={(localData as any).operation || "send-user-operation"}
                 onValueChange={(value) => handleChange("operation", value)}
               >
                 <SelectTrigger id="operation">
