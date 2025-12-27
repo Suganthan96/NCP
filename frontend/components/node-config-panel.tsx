@@ -209,15 +209,33 @@ export default function NodeConfigPanel({ node, updateNodeData, onClose }: NodeC
       case "erc20-tokens":
         return (
           <>
+            <div className="bg-blue-50 p-3 rounded-lg border border-blue-200 mb-4">
+              <p className="text-xs text-blue-900 font-semibold mb-1">📝 Required Configuration</p>
+              <p className="text-xs text-gray-700">
+                The Token Contract Address is <strong>required</strong> for ERC-20 permissions. 
+                Without it, the system will default to native ETH transfers.
+              </p>
+            </div>
+
             <div className="space-y-2">
-              <Label htmlFor="tokenAddress">Token Contract Address</Label>
+              <Label htmlFor="tokenAddress" className="flex items-center gap-1">
+                Token Contract Address <span className="text-red-500">*</span>
+              </Label>
               <Input
                 id="tokenAddress"
                 value={(localData as any).tokenAddress || ""}
                 onChange={(e) => handleChange("tokenAddress", e.target.value)}
-                placeholder="0x..."
-                className="font-mono text-xs"
+                placeholder="0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
+                className={`font-mono text-xs ${!(localData as any).tokenAddress ? 'border-red-300 focus:border-red-500' : ''}`}
               />
+              {!(localData as any).tokenAddress && (
+                <p className="text-xs text-red-600">
+                  ⚠️ Token address is required for ERC-20 permissions
+                </p>
+              )}
+              <p className="text-xs text-gray-500">
+                Example Sepolia USDC: 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238
+              </p>
             </div>
 
             <div className="space-y-2">

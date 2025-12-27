@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { parseEther } from "viem";
+import { parseEther, parseUnits } from "viem";
 import { erc7715ProviderActions } from "@metamask/smart-accounts-kit/actions";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { Loader2, CheckCircle, Shield, Clock, Coins } from "lucide-react";
@@ -129,6 +129,14 @@ export default function WorkflowPermissionManager({
       console.log('Building permission request...');
       console.log('Workflow Type:', workflowType);
       console.log('Smart Account Address to use in signer:', smartAccountAddress);
+      console.log('Token Address from params:', detectedParams.tokenAddress);
+      console.log('Amount Limit:', detectedParams.amountLimit);
+      console.log('Period Amount:', detectedParams.periodAmount);
+
+      // Validate token address is set for ERC-20 transfers
+      if (workflowType === 'erc20-transfer' && !detectedParams.tokenAddress) {
+        throw new Error('Token contract address is required for ERC-20 transfers. Please configure the token address in the ERC-20 Tokens node.');
+      }
 
       if (workflowType === 'erc20-transfer' && detectedParams.tokenAddress) {
         // ERC-20 token permission
@@ -145,8 +153,11 @@ export default function WorkflowPermissionManager({
           permission: {
             type: "erc20-token-periodic",
             data: {
-              token: detectedParams.tokenAddress as `0x${string}`,
-              periodAmount: parseEther(detectedParams.amountLimit || detectedParams.periodAmount || "0.001"),
+              tokenAddress: detectedParams.tokenAddress as `0x${string}`,
+              // Use parseUnits with 6 decimals for USDC (most ERC-20 tokens use 6 or 18 decimals)
+              // For USDC/USDT: 6 decimals, for most others: 18 decimals
+              // TODO: Fetch actual decimals from token contract
+              periodAmount: parseUnits(detectedParams.amountLimit || detectedParams.periodAmount || "0.001", 6),
               periodDuration: detectedParams.periodDuration || 86400,
               startTime: startTimestamp,
               justification: `Permission to transfer up to ${detectedParams.amountLimit || detectedParams.periodAmount} tokens from ${formatDate(detectedParams.startTime)} to ${formatDate(detectedParams.endTime)}`,

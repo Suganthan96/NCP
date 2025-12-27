@@ -105,20 +105,26 @@ export default function ManualPermissionRequestButton({
         info.push(`- Start Time: ${context.permissionParams.startTime || '✗'}`);
         info.push(`- End Time: ${context.permissionParams.endTime || '✗'}`);
         info.push(`- Amount Limit: ${context.permissionParams.amountLimit || '✗'}`);
-        info.push(`- Max Transfers: ${context.permissionParams.maxTransfers || '✗'}`);
         info.push(`- Token Address: ${context.permissionParams.tokenAddress || '✗'}`);
-        info.push(`- NFT Contract: ${context.permissionParams.nftContract || '✗'}`);
         
         const hasTimeParams = context.permissionParams.startTime && context.permissionParams.endTime;
-        const hasLimitParams = context.permissionParams.amountLimit || context.permissionParams.maxTransfers;
+        const hasLimitParams = context.permissionParams.amountLimit;
+        
+        // Check for token address if it's an ERC-20 transfer
+        if (context.operationType === 'erc20-transfer' && !context.permissionParams.tokenAddress) {
+          info.push(`\n❌ Token contract address is REQUIRED for ERC-20 transfers`);
+          info.push(`   Configure it in the ERC-20 Tokens node`);
+          info.push(`   Example Sepolia USDC: 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`);
+          return { ready: false, info: info.join('\n'), smartAccountAddr: actualSmartAccountAddr };
+        }
         
         if (!hasTimeParams) {
           info.push(`\n⚠️ Missing time parameters`);
-          return { ready: false, info: info.join('\n'), smartAccountAddr };
+          return { ready: false, info: info.join('\n'), smartAccountAddr: actualSmartAccountAddr };
         }
         
         if (!hasLimitParams) {
-          info.push(`\n⚠️ Missing limit parameters`);
+          info.push(`\n⚠️ Missing amount limit parameter`);
           return { ready: false, info: info.join('\n'), smartAccountAddr: actualSmartAccountAddr };
         }
         
