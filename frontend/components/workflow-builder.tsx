@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useCallback, useRef } from "react"
+import { useState, useCallback, useRef, useEffect } from "react"
 import { useAccount } from "wagmi"
 import { useRouter } from "next/navigation"
 import ReactFlow, {
@@ -43,6 +43,7 @@ import { SwapNode } from "./nodes/swap-node"
 import { generateNodeId, createNode } from "@/lib/workflow-utils"
 import { saveAgent, generateAgentName, generateAgentDescription } from "@/lib/agents-utils"
 import type { WorkflowNode, Workflow } from "@/lib/types"
+import ManualPermissionRequestButton from "./ManualPermissionRequestButton"
 
 // Create default nodes for the canvas
 const createAgentNode = () => createNode({
@@ -89,6 +90,31 @@ export default function WorkflowBuilder() {
   const [smartAccounts, setSmartAccounts] = useState<Record<string, string>>({}) // Track smart accounts per node
   const { address, isConnected } = useAccount()
   const router = useRouter()
+
+  // Monitor nodes for smart account address changes
+  useEffect(() => {
+    const newSmartAccounts: Record<string, string> = {}
+    
+    nodes.forEach(node => {
+      // Skip agent-default node as it's just a visual representation
+      if (node.type === 'erc4337' && node.id !== 'agent-default') {
+        const smartAccountAddress = (node.data as any).smartAccountAddress
+        if (smartAccountAddress) {
+          console.log(`✅ Found smart account in node ${node.id}:`, smartAccountAddress)
+          newSmartAccounts[node.id] = smartAccountAddress
+        }
+      }
+    })
+    
+    // Always update to ensure state is in sync
+    const stateJson = JSON.stringify(smartAccounts)
+    const newJson = JSON.stringify(newSmartAccounts)
+    
+    if (stateJson !== newJson) {
+      console.log('Updating smart accounts state:', newSmartAccounts)
+      setSmartAccounts(newSmartAccounts)
+    }
+  }, [nodes])
 
   const onConnect = useCallback(
     (params: Edge | Connection) => setEdges((eds) => addEdge({ ...params, type: "custom" }, eds)),
@@ -317,6 +343,11 @@ export default function WorkflowBuilder() {
               <MiniMap />
               <Panel position="top-right">
                 <div className="flex gap-2 flex-wrap">
+                  <ManualPermissionRequestButton 
+                    nodes={nodes}
+                    edges={edges}
+                    smartAccounts={smartAccounts}
+                  />
                   <Button onClick={resetToDefault} size="sm" variant="outline">
                     <RotateCcw className="h-4 w-4 mr-2" />
                     Reset Agent
@@ -350,7 +381,7 @@ export default function WorkflowBuilder() {
       </div>
 
       {selectedNode && (
-        <div className="w-80 border-l border-gray-200 p-4 bg-gray-50">
+        <div className="w-80 border-l border-gray-200 p-4 bg-gray-50 overflow-y-auto">
           <NodeConfigPanel
             node={selectedNode as WorkflowNode}
             updateNodeData={updateNodeData}

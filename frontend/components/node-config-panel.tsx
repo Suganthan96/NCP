@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { DateTimePicker } from "@/components/ui/date-time-picker"
 import type { WorkflowNode } from "@/lib/types"
 import CodeEditor from "./code-editor"
 
@@ -205,6 +206,262 @@ export default function NodeConfigPanel({ node, updateNodeData, onClose }: NodeC
           </>
         )
 
+      case "erc20-tokens":
+        return (
+          <>
+            <div className="space-y-2">
+              <Label htmlFor="tokenAddress">Token Contract Address</Label>
+              <Input
+                id="tokenAddress"
+                value={(localData as any).tokenAddress || ""}
+                onChange={(e) => handleChange("tokenAddress", e.target.value)}
+                placeholder="0x..."
+                className="font-mono text-xs"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="symbol">Token Symbol</Label>
+              <Input
+                id="symbol"
+                value={(localData as any).symbol || ""}
+                onChange={(e) => handleChange("symbol", e.target.value)}
+                placeholder="USDC, DAI, etc."
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="operation">Operation</Label>
+              <Select
+                value={(localData as any).operation || "transfer"}
+                onValueChange={(value) => handleChange("operation", value)}
+              >
+                <SelectTrigger id="operation">
+                  <SelectValue placeholder="Select operation" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="balance">Check Balance</SelectItem>
+                  <SelectItem value="transfer">Transfer</SelectItem>
+                  <SelectItem value="approve">Approve</SelectItem>
+                  <SelectItem value="allowance">Check Allowance</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="amount">Amount (per transaction)</Label>
+              <Input
+                id="amount"
+                type="number"
+                step="0.000001"
+                value={(localData as any).amount || ""}
+                onChange={(e) => handleChange("amount", e.target.value)}
+                placeholder="0.001"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="amountLimit">Total Amount Limit</Label>
+              <Input
+                id="amountLimit"
+                type="number"
+                step="0.000001"
+                value={(localData as any).amountLimit || ""}
+                onChange={(e) => handleChange("amountLimit", e.target.value)}
+                placeholder="1.0"
+              />
+              <p className="text-xs text-gray-500">
+                Maximum total amount that can be transferred during the permission period
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4">
+              <div className="space-y-2">
+                <Label>Start Time</Label>
+                <DateTimePicker
+                  value={(localData as any).startTime || ""}
+                  onChange={(value) => handleChange("startTime", value)}
+                  placeholder="Select start time"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>End Time</Label>
+                <DateTimePicker
+                  value={(localData as any).endTime || ""}
+                  onChange={(value) => handleChange("endTime", value)}
+                  placeholder="Select end time"
+                />
+              </div>
+            </div>
+
+            <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 mt-4">
+              <p className="text-xs text-amber-900 font-semibold mb-2">⏰ Permission Parameters</p>
+              <p className="text-xs text-gray-700">
+                When connected with an ERC-4337 node, these time limits and amount restrictions
+                will be used to request permissions from MetaMask.
+              </p>
+            </div>
+          </>
+        )
+
+      case "erc721-nft":
+        return (
+          <>
+            <div className="space-y-2">
+              <Label htmlFor="contractAddress">NFT Contract Address</Label>
+              <Input
+                id="contractAddress"
+                value={(localData as any).contractAddress || ""}
+                onChange={(e) => handleChange("contractAddress", e.target.value)}
+                placeholder="0x..."
+                className="font-mono text-xs"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="collection">Collection Name</Label>
+              <Input
+                id="collection"
+                value={(localData as any).collection || ""}
+                onChange={(e) => handleChange("collection", e.target.value)}
+                placeholder="Bored Ape, CryptoPunks, etc."
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="operation">Operation</Label>
+              <Select
+                value={(localData as any).operation || "transfer"}
+                onValueChange={(value) => handleChange("operation", value)}
+              >
+                <SelectTrigger id="operation">
+                  <SelectValue placeholder="Select operation" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="balance">Check Balance</SelectItem>
+                  <SelectItem value="transfer">Transfer</SelectItem>
+                  <SelectItem value="approve">Approve</SelectItem>
+                  <SelectItem value="mint">Mint</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="tokenId">Token ID</Label>
+              <Input
+                id="tokenId"
+                value={(localData as any).tokenId || ""}
+                onChange={(e) => handleChange("tokenId", e.target.value)}
+                placeholder="1234"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="maxTransfers">Maximum Transfers Allowed</Label>
+              <Input
+                id="maxTransfers"
+                type="number"
+                value={(localData as any).maxTransfers || ""}
+                onChange={(e) => handleChange("maxTransfers", e.target.value)}
+                placeholder="10"
+              />
+              <p className="text-xs text-gray-500">
+                Maximum number of NFT transfers during the permission period
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4">
+              <div className="space-y-2">
+                <Label>Start Time</Label>
+                <DateTimePicker
+                  value={(localData as any).startTime || ""}
+                  onChange={(value) => handleChange("startTime", value)}
+                  placeholder="Select start time"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>End Time</Label>
+                <DateTimePicker
+                  value={(localData as any).endTime || ""}
+                  onChange={(value) => handleChange("endTime", value)}
+                  placeholder="Select end time"
+                />
+              </div>
+            </div>
+
+            <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 mt-4">
+              <p className="text-xs text-amber-900 font-semibold mb-2">⏰ Permission Parameters</p>
+              <p className="text-xs text-gray-700">
+                When connected with an ERC-4337 node, these time limits and transfer restrictions
+                will be used to request permissions from MetaMask.
+              </p>
+            </div>
+          </>
+        )
+
+      case "transfer":
+        return (
+          <>
+            <div className="space-y-2">
+              <Label htmlFor="to">Recipient Address</Label>
+              <Input
+                id="to"
+                value={(localData as any).to || ""}
+                onChange={(e) => handleChange("to", e.target.value)}
+                placeholder="0x..."
+                className="font-mono text-xs"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="amount">Amount</Label>
+              <Input
+                id="amount"
+                type="number"
+                step="0.000001"
+                value={(localData as any).amount || ""}
+                onChange={(e) => handleChange("amount", e.target.value)}
+                placeholder="0.001"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="asset">Asset Type</Label>
+              <Select
+                value={(localData as any).asset || "eth"}
+                onValueChange={(value) => handleChange("asset", value)}
+              >
+                <SelectTrigger id="asset">
+                  <SelectValue placeholder="Select asset" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="eth">ETH (Native)</SelectItem>
+                  <SelectItem value="erc20">ERC-20 Token</SelectItem>
+                  <SelectItem value="erc721">ERC-721 NFT</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="network">Network</Label>
+              <Select
+                value={(localData as any).network || "ethereum"}
+                onValueChange={(value) => handleChange("network", value)}
+              >
+                <SelectTrigger id="network">
+                  <SelectValue placeholder="Select network" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ethereum">Ethereum</SelectItem>
+                  <SelectItem value="sepolia">Sepolia</SelectItem>
+                  <SelectItem value="polygon">Polygon</SelectItem>
+                  <SelectItem value="arbitrum">Arbitrum</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </>
+        )
+
       case "erc4337":
         return (
           <>
@@ -226,6 +483,22 @@ export default function NodeConfigPanel({ node, updateNodeData, onClose }: NodeC
                   : "Smart account will be created automatically"}
               </p>
             </div>
+
+            {(localData as any).smartAccountStatus === "created" && (
+              <div className="space-y-2">
+                <Button 
+                  className="w-full" 
+                  onClick={() => {
+                    window.open(`/execute?nodeId=${node.id}`, '_blank');
+                  }}
+                >
+                  🚀 Execute Transfer
+                </Button>
+                <p className="text-xs text-gray-500 text-center">
+                  Opens execution interface in new tab
+                </p>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="operation">Operation Type</Label>

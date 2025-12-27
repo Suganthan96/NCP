@@ -8,6 +8,9 @@ interface ERC721NodeData {
   operation?: "balance" | "transfer" | "mint" | "burn" | "metadata"
   tokenId?: string
   collection?: string
+  startTime?: string
+  endTime?: string
+  maxTransfers?: number
 }
 
 export function ERC721NFTNode({ data }: { data: ERC721NodeData }) {

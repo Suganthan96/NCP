@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { ArrowLeft, Send, Bot, User, Loader2 } from "lucide-react"
 import { getAgents } from "@/lib/agents-utils"
 import type { Agent } from "@/lib/types"
+import { enrichMessageWithContext, convertWorkflowToAgentFormat, generateExecutionPlan } from "@/lib/workflow-executor"
 
 interface ChatMessage {
   id: string
@@ -105,11 +106,19 @@ I can help you with Web3 operations like wallet management, token transfers, NFT
     setIsTyping(true)
     
     try {
+      // Enrich user message with workflow execution context
+      const enrichedMessage = enrichMessageWithContext(inputMessage.trim(), agent.workflow)
+      const workflowFormat = convertWorkflowToAgentFormat(agent.workflow)
+      const executionPlan = generateExecutionPlan(agent.workflow)
+
       // Prepare request for the agent API
       const agentRequest = {
         tools: convertWorkflowToTools(agent),
-        user_message: inputMessage.trim(),
-        private_key: address ? `demo_key_${address}` : undefined, // Using demo key for safety
+        workflow_structure: workflowFormat,
+        execution_plan: executionPlan,
+        user_message: enrichedMessage,
+        original_message: inputMessage.trim(),
+        private_key: address ? `demo_key_${address}` : undefined,
         context: {
           agent_name: agent.name,
           agent_description: agent.description,

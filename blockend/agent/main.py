@@ -189,19 +189,6 @@ TOOL_DEFINITIONS = {
         },
         "endpoint": "http://localhost:3000/api/address/{address}/balance/erc20",
         "method": "GET"
-    },
-    "create_smart_account": {
-        "name": "create_smart_account",
-        "description": "Create a new ERC-4337 smart account. Requires wallet address.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "address": {"type": "string", "description": "Wallet address to create smart account for"}
-            },
-            "required": ["address"]
-        },
-        "endpoint": "http://localhost:3000/api/create-smart-account",
-        "method": "POST"
     }
 }
 
@@ -216,6 +203,9 @@ class AgentRequest(BaseModel):
     user_message: str
     private_key: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
+    execution_plan: Optional[Dict[str, Any]] = None
+    workflow_structure: Optional[Dict[str, Any]] = None
+    original_message: Optional[str] = None
 
 class ChatRequest(BaseModel):
     message: str
@@ -710,41 +700,64 @@ async def chat_with_agent_simple(request: AgentRequest):
                     "results": []
                 }
         
-        # Check if user wants to create smart account
-        if any(word in request.user_message.lower() for word in ["smart account", "create smart", "erc-4337", "erc4337"]):
-            # Try to extract address from message
-            address_match = re.search(r'0x[a-fA-F0-9]{40}', request.user_message)
-            if address_match:
-                address = address_match.group(0)
-                result = execute_tool("create_smart_account", {"address": address})
-                
-                if result["success"]:
-                    account_info = result["result"]
-                    return {
-                        "agent_response": f"🔐 **Smart Account Created!**\n\n👤 Owner: `{address}`\n📍 Smart Account: `{account_info.get('smartAccountAddress', 'N/A')}`\n🌐 Network: Ethereum\n\n✅ Your smart account is ready for advanced operations like gasless transactions and account abstraction features!",
-                        "tool_calls": [{"tool": "create_smart_account", "parameters": {"address": address}}],
-                        "results": [result]
-                    }
-                else:
-                    return {
-                        "agent_response": f"❌ Failed to create smart account: {result['error']}",
-                        "tool_calls": [],
-                        "results": [result]
-                    }
-            else:
-                return {
-                    "agent_response": "I need a wallet address to create a smart account. Please provide an address like:\n`Create smart account for 0x1234567890123456789012345678901234567890`",
-                    "tool_calls": [],
-                    "results": []
-                }
+        # Extract smart account info from execution plan if available
+        execution_steps = []
+        smart_accounts = {}
+        workflow_context = ""
+        
+        if request.execution_plan and isinstance(request.execution_plan, dict):
+            execution_steps = request.execution_plan.get("execution_steps", [])
+            
+            # Extract smart accounts from execution steps
+            for step in execution_steps:
+                if isinstance(step, dict) and "smart_account" in step:
+                    sa_address = step.get("smart_account")
+                    if sa_address:
+                        smart_accounts[f"step_{step.get('step', 0)}"] = sa_address
+            
+            # Build workflow context info (don't return, just prepare it)
+            if execution_steps:
+                workflow_context = f"\n\n🔧 **Workflow Ready**: {len(execution_steps)} step(s) configured with {len(smart_accounts)} smart account(s)"
         
         # Check if user wants to transfer tokens
         if any(word in request.user_message.lower() for word in ["transfer", "send"]):
-            # Extract transfer parameters
+            # Extract transfer details from user message
             address_matches = re.findall(r'0x[a-fA-F0-9]{40}', request.user_message)
-            amount_match = re.search(r'(\d+(?:\.\d+)?)', request.user_message)
+            amount_match = re.search(r'(\d+(?:\.\d+)?)\s*(eth|usdc|usdt|dai)?', request.user_message.lower())
             
-            if len(address_matches) >= 2 and amount_match:  # Need recipient address and token address
+            user_recipient = address_matches[0] if address_matches else None
+            user_amount = amount_match.group(1) if amount_match else None
+            user_token = amount_match.group(2) if amount_match and amount_match.group(2) else "eth"
+            
+            # Check if we have execution steps with smart accounts
+            if execution_steps:
+                # Enhance steps with user-provided details
+                enhanced_steps = []
+                for step in execution_steps:
+                    step_desc = step.get('description', step.get('operation'))
+                    # Replace undefined/0 values with user input
+                    if user_recipient and 'undefined' in step_desc:
+                        step_desc = step_desc.replace('undefined', user_recipient)
+                    if user_amount and ('0 ' in step_desc or 'X ' in step_desc):
+                        step_desc = step_desc.replace('0 ETH', f'{user_amount} {user_token.upper()}')
+                        step_desc = step_desc.replace('X ETH', f'{user_amount} {user_token.upper()}')
+                        step_desc = step_desc.replace('X tokens', f'{user_amount} {user_token.upper()}')
+                    enhanced_steps.append(step_desc)
+                
+                steps_info = "\n".join([f"• {desc}" for desc in enhanced_steps])
+                
+                # Get the smart account address
+                primary_sa = list(smart_accounts.values())[0] if smart_accounts else "Not found"
+                
+                return {
+                    "agent_response": f"✅ **Ready to Execute Transfer!**\n\n📋 **Transfer Details**:\n{steps_info}\n\n🔐 **Smart Account**: `{primary_sa}`{workflow_context}\n\n💡 **Configuration**:\n- ✅ Smart account created and ready\n- ✅ Recipient: `{user_recipient or 'Not specified'}`\n- ✅ Amount: {user_amount} {user_token.upper() if user_amount else 'Not specified'}\n- ✅ Using ERC-4337 for gasless transactions\n\n🚀 **To Execute**: Backend needs ERC-4337 UserOperation integration to send transactions via the smart account.\n\n📝 **How it works**:\n1. Your smart account (not your EOA) initiates the transfer\n2. Transaction is bundled into a UserOperation\n3. Paymaster can sponsor gas fees (gasless transactions)\n4. Higher security with account abstraction features",
+                    "tool_calls": [],
+                    "results": [],
+                    "execution_plan": request.execution_plan
+                }
+            
+            # Fallback: No workflow configured
+            if len(address_matches) >= 1 and amount_match:  # Need recipient address and token address
                 to_address = address_matches[0]  # First address is recipient
                 token_address = address_matches[1] if len(address_matches) > 1 else "0x0000000000000000000000000000000000000000"  # Default STT token
                 amount = amount_match.group(1)
@@ -1094,5 +1107,4 @@ async def root():
     }
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
     uvicorn.run(app, host="0.0.0.0", port=8000)

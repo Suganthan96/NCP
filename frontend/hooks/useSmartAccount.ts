@@ -72,7 +72,11 @@ export function useSmartAccount(nodeId: string) {
       });
 
       const accountAddress = smartAccount.address;
-      console.log(`Smart account created: ${accountAddress}`);
+      console.log(`✅ Smart account created successfully!`);
+      console.log(`Node ID: ${nodeId}`);
+      console.log(`Smart Account Address: ${accountAddress}`);
+      console.log(`User Wallet Address (signer): ${userAddress}`);
+      console.log(`These should be DIFFERENT addresses!`);
 
       // Store the account address for this node
       setStoredAccount(nodeId, accountAddress);
@@ -97,21 +101,40 @@ export function useSmartAccount(nodeId: string) {
 
   // Auto-create smart account on mount if not exists
   useEffect(() => {
-    // Skip if nodeId contains 'agent-default' (default agent node)
-    if (nodeId.includes('agent-default')) {
+    // Skip smart account creation for the agent-default node
+    // This is just a visual representation, not an actual smart account node
+    if (nodeId === 'agent-default') {
+      console.log(`ℹ️ Skipping smart account creation for agent-default node`);
       return;
     }
-
+    
     const storedAddress = getStoredAccount(nodeId);
+    
+    console.log(`useSmartAccount hook for node: ${nodeId}`);
+    console.log(`Stored address from localStorage: ${storedAddress}`);
+    console.log(`User wallet address: ${userAddress}`);
+    
+    // Check if stored address is actually the user's wallet (wrong!)
+    if (storedAddress && userAddress && storedAddress.toLowerCase() === userAddress.toLowerCase()) {
+      console.error(`❌ ERROR: Stored address is wallet address, not smart account! Clearing and recreating...`);
+      localStorage.removeItem(`smartAccount_${nodeId}`);
+      // Force recreate
+      if (walletClient && publicClient && !accountData.isCreating) {
+        createSmartAccount();
+      }
+      return;
+    }
     
     if (storedAddress) {
       // Account already exists, just set the address
+      console.log(`Using existing smart account: ${storedAddress}`);
       setAccountData(prev => ({
         ...prev,
         address: storedAddress,
       }));
     } else if (userAddress && walletClient && publicClient && !accountData.isCreating) {
       // Create new account if doesn't exist
+      console.log(`Creating new smart account for node: ${nodeId}`);
       createSmartAccount();
     }
   }, [nodeId, userAddress, walletClient, publicClient]);

@@ -8,6 +8,9 @@ interface ERC20NodeData {
   operation?: "balance" | "transfer" | "approve" | "allowance"
   amount?: string
   symbol?: string
+  startTime?: string
+  endTime?: string
+  amountLimit?: string
 }
 
 export function ERC20TokensNode({ data }: { data: ERC20NodeData }) {
