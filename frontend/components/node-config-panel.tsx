@@ -304,101 +304,6 @@ export default function NodeConfigPanel({ node, updateNodeData, onClose }: NodeC
           </>
         )
 
-      case "erc721-nft":
-        return (
-          <>
-            <div className="space-y-2">
-              <Label htmlFor="contractAddress">NFT Contract Address</Label>
-              <Input
-                id="contractAddress"
-                value={(localData as any).contractAddress || ""}
-                onChange={(e) => handleChange("contractAddress", e.target.value)}
-                placeholder="0x..."
-                className="font-mono text-xs"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="collection">Collection Name</Label>
-              <Input
-                id="collection"
-                value={(localData as any).collection || ""}
-                onChange={(e) => handleChange("collection", e.target.value)}
-                placeholder="Bored Ape, CryptoPunks, etc."
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="operation">Operation</Label>
-              <Select
-                value={(localData as any).operation || "transfer"}
-                onValueChange={(value) => handleChange("operation", value)}
-              >
-                <SelectTrigger id="operation">
-                  <SelectValue placeholder="Select operation" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="balance">Check Balance</SelectItem>
-                  <SelectItem value="transfer">Transfer</SelectItem>
-                  <SelectItem value="approve">Approve</SelectItem>
-                  <SelectItem value="mint">Mint</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="tokenId">Token ID</Label>
-              <Input
-                id="tokenId"
-                value={(localData as any).tokenId || ""}
-                onChange={(e) => handleChange("tokenId", e.target.value)}
-                placeholder="1234"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="maxTransfers">Maximum Transfers Allowed</Label>
-              <Input
-                id="maxTransfers"
-                type="number"
-                value={(localData as any).maxTransfers || ""}
-                onChange={(e) => handleChange("maxTransfers", e.target.value)}
-                placeholder="10"
-              />
-              <p className="text-xs text-gray-500">
-                Maximum number of NFT transfers during the permission period
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4">
-              <div className="space-y-2">
-                <Label>Start Time</Label>
-                <DateTimePicker
-                  value={(localData as any).startTime || ""}
-                  onChange={(value) => handleChange("startTime", value)}
-                  placeholder="Select start time"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>End Time</Label>
-                <DateTimePicker
-                  value={(localData as any).endTime || ""}
-                  onChange={(value) => handleChange("endTime", value)}
-                  placeholder="Select end time"
-                />
-              </div>
-            </div>
-
-            <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 mt-4">
-              <p className="text-xs text-amber-900 font-semibold mb-2">⏰ Permission Parameters</p>
-              <p className="text-xs text-gray-700">
-                When connected with an ERC-4337 node, these time limits and transfer restrictions
-                will be used to request permissions from MetaMask.
-              </p>
-            </div>
-          </>
-        )
-
       case "transfer":
         return (
           <>
@@ -437,20 +342,7 @@ export default function NodeConfigPanel({ node, updateNodeData, onClose }: NodeC
                 <SelectContent>
                   <SelectItem value="eth">ETH (Native)</SelectItem>
                   <SelectItem value="erc20">ERC-20 Token</SelectItem>
-                  <SelectItem value="erc721">ERC-721 NFT</SelectItem>
                 </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="network">Network</Label>
-              <Select
-                value={(localData as any).network || "ethereum"}
-                onValueChange={(value) => handleChange("network", value)}
-              >
-                <SelectTrigger id="network">
-                  <SelectValue placeholder="Select network" />
-                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ethereum">Ethereum</SelectItem>
                   <SelectItem value="sepolia">Sepolia</SelectItem>

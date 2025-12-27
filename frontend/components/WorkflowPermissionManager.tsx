@@ -153,29 +153,6 @@ export default function WorkflowPermissionManager({
             },
           },
         };
-      } else if (workflowType === 'nft-transfer' && detectedParams.nftContract) {
-        // ERC-721 NFT permission
-        permissionData = {
-          chainId,
-          expiry,
-          signer: {
-            type: "account",
-            data: {
-              address: smartAccountAddress as `0x${string}`,
-            },
-          },
-          isAdjustmentAllowed: true,
-          permission: {
-            type: "nft-periodic",
-            data: {
-              nftContract: detectedParams.nftContract as `0x${string}`,
-              maxTransfers: detectedParams.maxTransfers || 10,
-              periodDuration: detectedParams.periodDuration || 86400,
-              startTime: startTimestamp,
-              justification: `Permission to transfer up to ${detectedParams.maxTransfers || 10} NFTs from ${formatDate(detectedParams.startTime)} to ${formatDate(detectedParams.endTime)}`,
-            },
-          },
-        };
       } else {
         // Native token (ETH) permission - fallback
         permissionData = {

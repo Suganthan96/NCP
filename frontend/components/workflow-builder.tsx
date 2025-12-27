@@ -35,7 +35,6 @@ import { CodeNode } from "./nodes/code-node"
 import { ERC4337Node } from "./nodes/erc4337-node"
 import { WalletBalanceNode } from "./nodes/wallet-balance-node"
 import { ERC20TokensNode } from "./nodes/erc20-tokens-node"
-import { ERC721NFTNode } from "./nodes/erc721-nft-node"
 import { FetchPriceNode } from "./nodes/fetch-price-node"
 import { WalletAnalyticsNode } from "./nodes/wallet-analytics-node"
 import { TransferNode } from "./nodes/transfer-node"
@@ -70,7 +69,6 @@ const nodeTypes: NodeTypes = {
   "erc4337": ERC4337Node,
   "wallet-balance": WalletBalanceNode,
   "erc20-tokens": ERC20TokensNode,
-  "erc721-nft": ERC721NFTNode,
   "fetch-price": FetchPriceNode,
   "wallet-analytics": WalletAnalyticsNode,
   "transfer": TransferNode,

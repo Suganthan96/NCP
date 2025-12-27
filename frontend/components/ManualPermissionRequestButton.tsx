@@ -37,13 +37,11 @@ export default function ManualPermissionRequestButton({
     const erc4337Node = nodes.find(n => n.type === 'erc4337' && n.id !== 'agent-default');
     const transferNode = nodes.find(n => n.type === 'transfer');
     const tokenNode = nodes.find(n => n.type === 'erc20-tokens');
-    const nftNode = nodes.find(n => n.type === 'erc721-nft');
 
     info.push(`Found nodes:`);
     info.push(`- ERC-4337: ${erc4337Node ? '✓' : '✗'}`);
     info.push(`- Transfer: ${transferNode ? '✓' : '✗'}`);
     info.push(`- ERC-20: ${tokenNode ? '✓' : '✗'}`);
-    info.push(`- ERC-721: ${nftNode ? '✓' : '✗'}`);
 
     if (!erc4337Node) {
       info.push(`\n⚠️ Missing ERC-4337 node`);
@@ -55,8 +53,8 @@ export default function ManualPermissionRequestButton({
       return { ready: false, info: info.join('\n') };
     }
 
-    if (!tokenNode && !nftNode) {
-      info.push(`\n⚠️ Missing ERC-20 or ERC-721 node`);
+    if (!tokenNode) {
+      info.push(`\n⚠️ Missing ERC-20 token node`);
       return { ready: false, info: info.join('\n') };
     }
 

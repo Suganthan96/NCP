@@ -8,9 +8,8 @@ import type { Edge } from "reactflow"
 export interface ExecutionContext {
   smartAccountNode?: WorkflowNode
   tokenNode?: WorkflowNode
-  nftNode?: WorkflowNode
   transferNode?: WorkflowNode
-  operationType: 'erc20-transfer' | 'nft-transfer' | 'eth-transfer' | 'unknown'
+  operationType: 'erc20-transfer' | 'eth-transfer' | 'unknown'
   smartAccountAddress?: string
   permissionParams?: PermissionParameters
 }
@@ -22,9 +21,7 @@ export interface PermissionParameters {
   startTime?: string
   endTime?: string
   amountLimit?: string
-  maxTransfers?: number
   tokenAddress?: string
-  nftContract?: string
   periodAmount?: string
   periodDuration?: number
 }
@@ -83,9 +80,8 @@ export function analyzeTransferContext(
   // Identify key nodes in the chain
   const smartAccountNode = parentChain.find(n => n.type === 'erc4337')
   const tokenNode = parentChain.find(n => n.type === 'erc20-tokens')
-  const nftNode = parentChain.find(n => n.type === 'erc721-nft')
 
-  // Extract permission parameters from token or NFT node
+  // Extract permission parameters from token node
   let permissionParams: PermissionParameters | undefined
 
   if (tokenNode) {
@@ -101,17 +97,6 @@ export function analyzeTransferContext(
         ? (new Date(tokenData.endTime).getTime() - new Date(tokenData.startTime).getTime()) / 1000 
         : 86400 // Default to 1 day
     }
-  } else if (nftNode) {
-    const nftData = nftNode.data as any
-    permissionParams = {
-      startTime: nftData.startTime,
-      endTime: nftData.endTime,
-      maxTransfers: nftData.maxTransfers ? parseInt(nftData.maxTransfers) : undefined,
-      nftContract: nftData.contractAddress,
-      periodDuration: nftData.startTime && nftData.endTime 
-        ? (new Date(nftData.endTime).getTime() - new Date(nftData.startTime).getTime()) / 1000 
-        : 86400
-    }
   }
 
   // Determine operation type
@@ -119,8 +104,6 @@ export function analyzeTransferContext(
   
   if (smartAccountNode && tokenNode) {
     operationType = 'erc20-transfer'
-  } else if (smartAccountNode && nftNode) {
-    operationType = 'nft-transfer'
   } else if (smartAccountNode) {
     operationType = 'eth-transfer'
   }
@@ -128,7 +111,6 @@ export function analyzeTransferContext(
   return {
     smartAccountNode,
     tokenNode,
-    nftNode,
     transferNode,
     operationType,
     smartAccountAddress: (smartAccountNode?.data as any)?.smartAccountAddress as string | undefined,

@@ -15,7 +15,6 @@ import {
   Table,
   Wallet,
   Coins,
-  Image,
   TrendingUp,
   BarChart3,
   Send,
@@ -44,13 +43,6 @@ const nodeTypes = [
     description: "Handle ERC-20 tokens",
     icon: <Coins className="h-4 w-4 mr-2" />,
     category: "Tokens"
-  },
-  {
-    type: "erc721-nft",
-    label: "ERC-721 (NFT)",
-    description: "NFT operations",
-    icon: <Image className="h-4 w-4 mr-2" />,
-    category: "NFT"
   },
   {
     type: "fetch-price",
