@@ -23,6 +23,9 @@ import ReactFlow, {
 import "reactflow/dist/style.css"
 import { toast } from "@/components/ui/use-toast"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Save, Upload, Play, Trash2, RotateCcw } from "lucide-react"
 import NodeLibrary from "./node-library"
 import NodeConfigPanel from "./node-config-panel"
@@ -88,6 +91,8 @@ export default function WorkflowBuilder() {
   const [selectedNode, setSelectedNode] = useState<Node | null>(null)
   const [reactFlowInstance, setReactFlowInstance] = useState<any>(null)
   const [smartAccounts, setSmartAccounts] = useState<Record<string, string>>({}) // Track smart accounts per node
+  const [showSaveDialog, setShowSaveDialog] = useState(false)
+  const [workflowName, setWorkflowName] = useState("")
   const { address, isConnected } = useAccount()
   const router = useRouter()
 
@@ -222,14 +227,21 @@ export default function WorkflowBuilder() {
       return
     }
 
+    // Show dialog to get workflow name
+    setShowSaveDialog(true)
+  }
+
+  const handleSaveWithName = () => {
     const workflow: Workflow = {
       nodes: nodes as WorkflowNode[],
       edges,
     }
 
     try {
+      const finalName = workflowName.trim() || generateAgentName(workflow)
+      
       const savedAgent = saveAgent({
-        name: generateAgentName(workflow),
+        name: finalName,
         description: generateAgentDescription(workflow),
         workflow,
         nodeCount: nodes.length,
@@ -241,6 +253,9 @@ export default function WorkflowBuilder() {
         title: "Agent saved successfully!",
         description: `"${savedAgent.name}" has been saved to your agents`,
       })
+
+      setShowSaveDialog(false)
+      setWorkflowName("")
 
       // Redirect to agents page after a short delay
       setTimeout(() => {
@@ -379,6 +394,45 @@ export default function WorkflowBuilder() {
           </ReactFlowProvider>
         </div>
       </div>
+
+      {/* Save Dialog */}
+      <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Save Workflow</DialogTitle>
+            <DialogDescription>
+              Give your workflow a custom name or leave blank to auto-generate one.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="workflow-name">Workflow Name</Label>
+              <Input
+                id="workflow-name"
+                placeholder="e.g., USDC Transfer Agent"
+                value={workflowName}
+                onChange={(e) => setWorkflowName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleSaveWithName()
+                  }
+                }}
+              />
+              <p className="text-xs text-gray-500">
+                Leave empty to auto-generate from workflow structure
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSaveDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveWithName}>
+              Save Workflow
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {selectedNode && (
         <div className="w-80 border-l border-gray-200 p-4 bg-gray-50 overflow-y-auto">
