@@ -9,6 +9,9 @@ export interface ExecutionContext {
   smartAccountNode?: WorkflowNode
   tokenNode?: WorkflowNode
   nativeTokenNode?: WorkflowNode
+  // Support multiple token nodes
+  allTokenNodes?: WorkflowNode[]
+  allNativeTokenNodes?: WorkflowNode[]
   transferNode?: WorkflowNode
   operationType: 'erc20-transfer' | 'eth-transfer' | 'unknown'
   smartAccountAddress?: string
@@ -48,7 +51,82 @@ export function findChildNodes(nodeId: string, edges: Edge[]): string[] {
 }
 
 /**
+ * Validates workflow has the correct connection order:
+ * ERC-4337 Account → Transfer → (Native Token OR ERC-20 Token)
+ * Returns true only if this specific pattern exists
+ */
+export function validateWorkflowConnectionOrder(
+  nodes: WorkflowNode[],
+  edges: Edge[]
+): { valid: boolean; reason?: string; details?: any } {
+  // Find required nodes (excluding agent-default)
+  const erc4337Node = nodes.find(n => n.type === 'erc4337' && n.id !== 'agent-default')
+  const transferNode = nodes.find(n => n.type === 'transfer')
+  const tokenNode = nodes.find(n => n.type === 'erc20-tokens')
+  const nativeTokenNode = nodes.find(n => n.type === 'native-token')
+
+  if (!erc4337Node) {
+    return { valid: false, reason: 'ERC-4337 Account node is required' }
+  }
+
+  if (!transferNode) {
+    return { valid: false, reason: 'Transfer node is required' }
+  }
+
+  if (!tokenNode && !nativeTokenNode) {
+    return { valid: false, reason: 'Either Native Token (ETH) or ERC-20 Token node is required' }
+  }
+
+  const targetTokenNode = tokenNode || nativeTokenNode
+  if (!targetTokenNode) {
+    return { valid: false, reason: 'Token node not found' }
+  }
+
+  // Validate connection order: ERC-4337 → Transfer
+  const erc4337ToTransferEdge = edges.find(
+    e => e.source === erc4337Node.id && e.target === transferNode.id
+  )
+
+  if (!erc4337ToTransferEdge) {
+    return {
+      valid: false,
+      reason: 'ERC-4337 Account must be connected TO Transfer node',
+      details: {
+        expected: `${erc4337Node.id} → ${transferNode.id}`,
+        found: 'Connection missing'
+      }
+    }
+  }
+
+  // Validate connection order: Transfer → Token
+  const transferToTokenEdge = edges.find(
+    e => e.source === transferNode.id && e.target === targetTokenNode.id
+  )
+
+  if (!transferToTokenEdge) {
+    return {
+      valid: false,
+      reason: `Transfer node must be connected TO ${tokenNode ? 'ERC-20 Token' : 'Native Token (ETH)'} node`,
+      details: {
+        expected: `${transferNode.id} → ${targetTokenNode.id}`,
+        found: 'Connection missing'
+      }
+    }
+  }
+
+  // All validations passed
+  return {
+    valid: true,
+    details: {
+      order: `${erc4337Node.id} → ${transferNode.id} → ${targetTokenNode.id}`,
+      tokenType: tokenNode ? 'ERC-20' : 'Native ETH'
+    }
+  }
+}
+
+/**
  * Traverses the workflow graph to find execution context for a transfer node
+ * Expected order: ERC-4337 → Transfer → (Token/Native Token)
  */
 export function analyzeTransferContext(
   transferNodeId: string,
@@ -60,13 +138,13 @@ export function analyzeTransferContext(
     return { operationType: 'unknown' }
   }
 
-  // Find all parent nodes recursively
-  const visitedNodes = new Set<string>()
+  // Find parent nodes (nodes that come BEFORE transfer - should have ERC-4337)
+  const visitedParentNodes = new Set<string>()
   const parentChain: WorkflowNode[] = []
 
   function traverseParents(nodeId: string) {
-    if (visitedNodes.has(nodeId)) return
-    visitedNodes.add(nodeId)
+    if (visitedParentNodes.has(nodeId)) return
+    visitedParentNodes.add(nodeId)
 
     const parentIds = findParentNodes(nodeId, edges)
     for (const parentId of parentIds) {
@@ -80,10 +158,34 @@ export function analyzeTransferContext(
 
   traverseParents(transferNodeId)
 
-  // Identify key nodes in the chain
+  // Find child nodes (nodes that come AFTER transfer - should have Token nodes)
+  const visitedChildNodes = new Set<string>()
+  const childChain: WorkflowNode[] = []
+
+  function traverseChildren(nodeId: string) {
+    if (visitedChildNodes.has(nodeId)) return
+    visitedChildNodes.add(nodeId)
+
+    const childIds = findChildNodes(nodeId, edges)
+    for (const childId of childIds) {
+      const childNode = nodes.find(n => n.id === childId)
+      if (childNode) {
+        childChain.push(childNode)
+        traverseChildren(childId)
+      }
+    }
+  }
+
+  traverseChildren(transferNodeId)
+
+  // Identify key nodes: ERC-4337 should be in parent chain, tokens in child chain
   const smartAccountNode = parentChain.find(n => n.type === 'erc4337')
-  const tokenNode = parentChain.find(n => n.type === 'erc20-tokens')
-  const nativeTokenNode = parentChain.find(n => n.type === 'native-token')
+  // Get ALL token nodes connected to this transfer
+  const tokenNodes = childChain.filter(n => n.type === 'erc20-tokens')
+  const nativeTokenNodes = childChain.filter(n => n.type === 'native-token')
+  // Keep backward compatibility with single node
+  const tokenNode = tokenNodes[0]
+  const nativeTokenNode = nativeTokenNodes[0]
 
   // Extract permission parameters from token node or native token node
   let permissionParams: PermissionParameters | undefined
@@ -134,6 +236,8 @@ export function analyzeTransferContext(
     smartAccountNode,
     tokenNode,
     nativeTokenNode,
+    allTokenNodes: tokenNodes,
+    allNativeTokenNodes: nativeTokenNodes,
     transferNode,
     operationType,
     smartAccountAddress: (smartAccountNode?.data as any)?.smartAccountAddress as string | undefined,

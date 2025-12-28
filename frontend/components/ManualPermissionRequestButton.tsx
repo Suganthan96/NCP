@@ -3,10 +3,10 @@
 import { useState } from "react";
 import { Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import WorkflowPermissionManager from "./WorkflowPermissionManager";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import TokenPermissionCard from "./TokenPermissionCard";
 import { PermissionProvider } from "@/providers/PermissionProvider";
-import { analyzeTransferContext } from "@/lib/workflow-executor";
+import { analyzeTransferContext, validateWorkflowConnectionOrder } from "@/lib/workflow-executor";
 import type { WorkflowNode } from "@/lib/types";
 import type { Edge } from "reactflow";
 import { toast } from "@/components/ui/use-toast";
@@ -24,6 +24,8 @@ export default function ManualPermissionRequestButton({
 }: ManualPermissionRequestButtonProps) {
   const [showDialog, setShowDialog] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string>("");
+  const [allTokenNodes, setAllTokenNodes] = useState<WorkflowNode[]>([]);
+  const [smartAccountAddr, setSmartAccountAddr] = useState<string>("");
 
   const checkWorkflowReadiness = () => {
     const info: string[] = [];
@@ -33,30 +35,33 @@ export default function ManualPermissionRequestButton({
     console.log('Edges:', edges)
     console.log('Smart Accounts State:', smartAccounts)
     
+    // Validate workflow connection order first
+    const connectionValidation = validateWorkflowConnectionOrder(nodes, edges);
+    
+    info.push(`Connection Order Validation:`);
+    if (!connectionValidation.valid) {
+      info.push(`❌ ${connectionValidation.reason}`);
+      if (connectionValidation.details) {
+        info.push(`\nExpected: ${connectionValidation.details.expected}`);
+        info.push(`Found: ${connectionValidation.details.found}`);
+      }
+      info.push(`\n⚠️ Required connection order:`);
+      info.push(`   ERC-4337 Account → Transfer → (Native Token OR ERC-20 Token)`);
+      return { ready: false, info: info.join('\n') };
+    }
+    
+    info.push(`✓ Correct order: ${connectionValidation.details?.order}`);
+    info.push(`✓ Token type: ${connectionValidation.details?.tokenType}`);
+    
     // Find required nodes (skip agent-default as it's just a visual representation)
     const erc4337Node = nodes.find(n => n.type === 'erc4337' && n.id !== 'agent-default');
     const transferNode = nodes.find(n => n.type === 'transfer');
     const tokenNode = nodes.find(n => n.type === 'erc20-tokens');
     const nativeTokenNode = nodes.find(n => n.type === 'native-token');
 
-    info.push(`Found nodes:`);
-    info.push(`- ERC-4337: ${erc4337Node ? '✓' : '✗'}`);
-    info.push(`- Transfer: ${transferNode ? '✓' : '✗'}`);
-    info.push(`- ERC-20: ${tokenNode ? '✓' : '✗'}`);
-    info.push(`- Native ETH: ${nativeTokenNode ? '✓' : '✗'}`);
-
-    if (!erc4337Node) {
-      info.push(`\n⚠️ Missing ERC-4337 node`);
-      return { ready: false, info: info.join('\n') };
-    }
-
-    if (!transferNode) {
-      info.push(`\n⚠️ Missing Transfer node`);
-      return { ready: false, info: info.join('\n') };
-    }
-
-    if (!tokenNode && !nativeTokenNode) {
-      info.push(`\n⚠️ Missing ERC-20 or Native ETH token node`);
+    // These should all exist due to validation above, but check anyway
+    if (!erc4337Node || !transferNode || (!tokenNode && !nativeTokenNode)) {
+      info.push(`\n⚠️ Critical nodes missing after validation`);
       return { ready: false, info: info.join('\n') };
     }
 
@@ -102,40 +107,62 @@ export default function ManualPermissionRequestButton({
       const context = analyzeTransferContext(transferNode.id, nodes, edges);
       info.push(`\nOperation Type: ${context.operationType}`);
       
-      if (context.permissionParams) {
-        info.push(`\nPermission Parameters:`);
-        info.push(`- Start Time: ${context.permissionParams.startTime || '✗'}`);
-        info.push(`- End Time: ${context.permissionParams.endTime || '✗'}`);
-        info.push(`- Amount Limit: ${context.permissionParams.amountLimit || '✗'}`);
-        info.push(`- Token Address: ${context.permissionParams.tokenAddress || '✗'}`);
+      // Collect all token nodes (both ERC-20 and Native)
+      const allTokens: WorkflowNode[] = [];
+      if (context.allTokenNodes && context.allTokenNodes.length > 0) {
+        allTokens.push(...context.allTokenNodes);
+      }
+      if (context.allNativeTokenNodes && context.allNativeTokenNodes.length > 0) {
+        allTokens.push(...context.allNativeTokenNodes);
+      }
+      
+      info.push(`\nFound ${allTokens.length} token node(s):`);
+      allTokens.forEach((token, idx) => {
+        const tokenData = token.data as any;
+        const isNative = token.type === 'native-token';
+        info.push(`  ${idx + 1}. ${isNative ? 'Native ETH' : `ERC-20 ${tokenData.symbol || ''}`}`);
+        info.push(`     - Start: ${tokenData.startTime || '✗'}`);
+        info.push(`     - End: ${tokenData.endTime || '✗'}`);
+        info.push(`     - Amount: ${tokenData.amountLimit || tokenData.amount || '✗'}`);
+        if (!isNative && !tokenData.tokenAddress) {
+          info.push(`     ❌ Missing token address`);
+        }
+      });
+      
+      // Validate each token has required parameters
+      let allValid = true;
+      for (const token of allTokens) {
+        const tokenData = token.data as any;
+        const isNative = token.type === 'native-token';
         
-        const hasTimeParams = context.permissionParams.startTime && context.permissionParams.endTime;
-        const hasLimitParams = context.permissionParams.amountLimit;
-        
-        // Check for token address if it's an ERC-20 transfer
-        if (context.operationType === 'erc20-transfer' && !context.permissionParams.tokenAddress) {
-          info.push(`\n❌ Token contract address is REQUIRED for ERC-20 transfers`);
-          info.push(`   Configure it in the ERC-20 Tokens node`);
-          info.push(`   Example Sepolia USDC: 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`);
-          return { ready: false, info: info.join('\n'), smartAccountAddr: actualSmartAccountAddr };
+        if (!tokenData.startTime || !tokenData.endTime) {
+          info.push(`\n⚠️ ${isNative ? 'Native ETH' : tokenData.symbol || 'Token'} node missing time parameters`);
+          allValid = false;
         }
         
-        if (!hasTimeParams) {
-          info.push(`\n⚠️ Missing time parameters`);
-          return { ready: false, info: info.join('\n'), smartAccountAddr: actualSmartAccountAddr };
+        if (!tokenData.amountLimit && !tokenData.amount) {
+          info.push(`\n⚠️ ${isNative ? 'Native ETH' : tokenData.symbol || 'Token'} node missing amount limit`);
+          allValid = false;
         }
         
-        if (!hasLimitParams) {
-          info.push(`\n⚠️ Missing amount limit parameter`);
-          return { ready: false, info: info.join('\n'), smartAccountAddr: actualSmartAccountAddr };
+        if (!isNative && !tokenData.tokenAddress) {
+          info.push(`\n❌ ${tokenData.symbol || 'ERC-20'} token missing contract address`);
+          allValid = false;
         }
-        
-        info.push(`\n✅ Workflow is ready for permissions!`);
-        return { ready: true, info: info.join('\n'), smartAccountAddr: actualSmartAccountAddr };
-      } else {
-        info.push(`\n⚠️ No permission parameters found`);
+      }
+      
+      if (allTokens.length === 0) {
+        info.push(`\n⚠️ No token nodes found connected to Transfer`);
         return { ready: false, info: info.join('\n'), smartAccountAddr: actualSmartAccountAddr };
       }
+      
+      if (!allValid) {
+        return { ready: false, info: info.join('\n'), smartAccountAddr: actualSmartAccountAddr, tokenNodes: allTokens };
+      }
+      
+      info.push(`\n✅ All ${allTokens.length} token node(s) are ready for permissions!`);
+      info.push(`\n💡 You can grant permissions for each token separately`);
+      return { ready: true, info: info.join('\n'), smartAccountAddr: actualSmartAccountAddr, tokenNodes: allTokens };
     }
 
     return { ready: false, info: info.join('\n'), smartAccountAddr: actualSmartAccountAddr };
@@ -146,7 +173,9 @@ export default function ManualPermissionRequestButton({
     setDebugInfo(result.info);
     console.log('Workflow readiness check:', result);
     
-    if (result.ready) {
+    if (result.ready && result.tokenNodes && result.smartAccountAddr) {
+      setAllTokenNodes(result.tokenNodes);
+      setSmartAccountAddr(result.smartAccountAddr);
       setShowDialog(true);
     } else {
       toast({
@@ -158,10 +187,9 @@ export default function ManualPermissionRequestButton({
   };
 
   const handleSuccess = () => {
-    setShowDialog(false);
     toast({
-      title: "Permissions granted!",
-      description: "Your workflow now has execution permissions",
+      title: "Permission granted!",
+      description: "Token permission has been successfully granted",
     });
   };
 
@@ -190,31 +218,49 @@ export default function ManualPermissionRequestButton({
       </Button>
 
       <Dialog open={showDialog} onOpenChange={setShowDialog}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-2xl flex items-center gap-2">
-              🔐 Workflow Permission Request
+              🔐 Grant Token Permissions
             </DialogTitle>
             <DialogDescription>
-              Grant permissions to allow the smart account to execute transfers within the configured limits.
+              Grant permissions for each token separately. All tokens use the same smart account.
             </DialogDescription>
           </DialogHeader>
           
-          <PermissionProvider>
-            <WorkflowPermissionManager
-              nodes={nodes}
-              edges={edges}
-              smartAccount={null}
-              smartAccountAddress={result.smartAccountAddr || ""}
-              onSuccess={handleSuccess}
-              onError={handleError}
-            />
-          </PermissionProvider>
+          <div className="space-y-3">
+            <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 p-3 rounded">
+              <p className="text-sm text-blue-900 dark:text-blue-100">
+                <strong>Smart Account:</strong>
+              </p>
+              <p className="font-mono text-xs text-blue-700 dark:text-blue-300 break-all">
+                {smartAccountAddr}
+              </p>
+              <p className="text-xs text-blue-600 dark:text-blue-400 mt-2">
+                💡 Grant permissions for each token individually. You can approve them one at a time.
+              </p>
+            </div>
+
+            <PermissionProvider>
+              <div className="space-y-3">
+                {allTokenNodes.map((tokenNode, index) => (
+                  <TokenPermissionCard
+                    key={tokenNode.id}
+                    tokenNode={tokenNode}
+                    smartAccountAddress={smartAccountAddr}
+                    onSuccess={handleSuccess}
+                    onError={handleError}
+                  />
+                ))}
+              </div>
+            </PermissionProvider>
+          </div>
 
           <div className="mt-4 p-4 bg-gray-100 dark:bg-gray-800 rounded text-xs">
             <h4 className="font-semibold mb-2">Debug Info:</h4>
-            <p className="text-green-600 font-semibold mb-1">Smart Account Address Being Used:</p>
-            <p className="font-mono break-all mb-2">{result.smartAccountAddr || "Not found"}</p>
+            <p className="text-green-600 font-semibold mb-1">Smart Account Address:</p>
+            <p className="font-mono break-all mb-2">{smartAccountAddr || "Not found"}</p>
+            <p className="text-blue-600 font-semibold mb-1">Token Nodes: {allTokenNodes.length}</p>
             <pre className="whitespace-pre-wrap">{debugInfo}</pre>
           </div>
         </DialogContent>
