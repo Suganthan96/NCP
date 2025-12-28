@@ -52,8 +52,9 @@ export function findChildNodes(nodeId: string, edges: Edge[]): string[] {
 
 /**
  * Validates workflow has the correct connection order:
- * ERC-4337 Account → Transfer → (Native Token OR ERC-20 Token)
- * Returns true only if this specific pattern exists
+ * Pattern 1: ERC-4337 Account → Transfer → (Native Token OR ERC-20 Token)
+ * Pattern 2: ERC-4337 Account → Transfer → Swap → (Native Token OR ERC-20 Token)
+ * Returns true only if one of these specific patterns exists
  */
 export function validateWorkflowConnectionOrder(
   nodes: WorkflowNode[],
@@ -62,8 +63,8 @@ export function validateWorkflowConnectionOrder(
   // Find required nodes (excluding agent-default)
   const erc4337Node = nodes.find(n => n.type === 'erc4337' && n.id !== 'agent-default')
   const transferNode = nodes.find(n => n.type === 'transfer')
-  const tokenNode = nodes.find(n => n.type === 'erc20-tokens')
-  const nativeTokenNode = nodes.find(n => n.type === 'native-token')
+  const swapNode = nodes.find(n => n.type === 'swap')
+  const tokenNodes = nodes.filter(n => n.type === 'erc20-tokens' || n.type === 'native-token')
 
   if (!erc4337Node) {
     return { valid: false, reason: 'ERC-4337 Account node is required' }
@@ -73,16 +74,11 @@ export function validateWorkflowConnectionOrder(
     return { valid: false, reason: 'Transfer node is required' }
   }
 
-  if (!tokenNode && !nativeTokenNode) {
-    return { valid: false, reason: 'Either Native Token (ETH) or ERC-20 Token node is required' }
+  if (tokenNodes.length === 0) {
+    return { valid: false, reason: 'At least one Token node (Native Token or ERC-20 Token) is required' }
   }
 
-  const targetTokenNode = tokenNode || nativeTokenNode
-  if (!targetTokenNode) {
-    return { valid: false, reason: 'Token node not found' }
-  }
-
-  // Validate connection order: ERC-4337 → Transfer
+  // Validate connection: ERC-4337 → Transfer
   const erc4337ToTransferEdge = edges.find(
     e => e.source === erc4337Node.id && e.target === transferNode.id
   )
@@ -98,28 +94,72 @@ export function validateWorkflowConnectionOrder(
     }
   }
 
-  // Validate connection order: Transfer → Token
-  const transferToTokenEdge = edges.find(
-    e => e.source === transferNode.id && e.target === targetTokenNode.id
-  )
+  // Check if Swap node exists and is connected
+  if (swapNode) {
+    // Pattern 2: ERC-4337 → Transfer → Swap → Token(s)
+    const transferToSwapEdge = edges.find(
+      e => e.source === transferNode.id && e.target === swapNode.id
+    )
 
-  if (!transferToTokenEdge) {
-    return {
-      valid: false,
-      reason: `Transfer node must be connected TO ${tokenNode ? 'ERC-20 Token' : 'Native Token (ETH)'} node`,
-      details: {
-        expected: `${transferNode.id} → ${targetTokenNode.id}`,
-        found: 'Connection missing'
+    if (!transferToSwapEdge) {
+      return {
+        valid: false,
+        reason: 'Transfer node must be connected TO Swap node',
+        details: {
+          expected: `${transferNode.id} → ${swapNode.id}`,
+          found: 'Connection missing'
+        }
       }
     }
-  }
 
-  // All validations passed
-  return {
-    valid: true,
-    details: {
-      order: `${erc4337Node.id} → ${transferNode.id} → ${targetTokenNode.id}`,
-      tokenType: tokenNode ? 'ERC-20' : 'Native ETH'
+    // Validate Swap → Token connections
+    const tokensConnectedToSwap = tokenNodes.filter(token =>
+      edges.some(e => e.source === swapNode.id && e.target === token.id)
+    )
+
+    if (tokensConnectedToSwap.length === 0) {
+      return {
+        valid: false,
+        reason: 'Swap node must be connected TO at least one Token node',
+        details: {
+          expected: `${swapNode.id} → [Token nodes]`,
+          found: 'No token connections'
+        }
+      }
+    }
+
+    return {
+      valid: true,
+      details: {
+        order: `${erc4337Node.id} → ${transferNode.id} → ${swapNode.id} → [${tokensConnectedToSwap.length} token(s)]`,
+        pattern: 'with-swap',
+        tokenCount: tokensConnectedToSwap.length
+      }
+    }
+  } else {
+    // Pattern 1: ERC-4337 → Transfer → Token(s)
+    const tokensConnectedToTransfer = tokenNodes.filter(token =>
+      edges.some(e => e.source === transferNode.id && e.target === token.id)
+    )
+
+    if (tokensConnectedToTransfer.length === 0) {
+      return {
+        valid: false,
+        reason: 'Transfer node must be connected TO at least one Token node',
+        details: {
+          expected: `${transferNode.id} → [Token nodes]`,
+          found: 'No token connections'
+        }
+      }
+    }
+
+    return {
+      valid: true,
+      details: {
+        order: `${erc4337Node.id} → ${transferNode.id} → [${tokensConnectedToTransfer.length} token(s)]`,
+        pattern: 'direct',
+        tokenCount: tokensConnectedToTransfer.length
+      }
     }
   }
 }
@@ -180,9 +220,47 @@ export function analyzeTransferContext(
 
   // Identify key nodes: ERC-4337 should be in parent chain, tokens in child chain
   const smartAccountNode = parentChain.find(n => n.type === 'erc4337')
-  // Get ALL token nodes connected to this transfer
-  const tokenNodes = childChain.filter(n => n.type === 'erc20-tokens')
-  const nativeTokenNodes = childChain.filter(n => n.type === 'native-token')
+  
+  // Check if there's a Swap node in the child chain
+  const swapNode = childChain.find(n => n.type === 'swap')
+  
+  // Get ALL token nodes - avoid duplicates by tracking node IDs
+  const tokenNodeIds = new Set<string>()
+  const tokenNodes: WorkflowNode[] = []
+  const nativeTokenNodes: WorkflowNode[] = []
+  
+  // First, get tokens DIRECTLY connected to transfer (not via swap)
+  const directTransferChildIds = findChildNodes(transferNodeId, edges)
+  for (const childId of directTransferChildIds) {
+    const childNode = nodes.find(n => n.id === childId)
+    if (childNode && !tokenNodeIds.has(childNode.id)) {
+      if (childNode.type === 'erc20-tokens') {
+        tokenNodes.push(childNode)
+        tokenNodeIds.add(childNode.id)
+      } else if (childNode.type === 'native-token') {
+        nativeTokenNodes.push(childNode)
+        tokenNodeIds.add(childNode.id)
+      }
+    }
+  }
+  
+  // Then, if swap exists, get tokens connected to swap (avoiding duplicates)
+  if (swapNode) {
+    const swapChildIds = findChildNodes(swapNode.id, edges)
+    for (const childId of swapChildIds) {
+      const childNode = nodes.find(n => n.id === childId)
+      if (childNode && !tokenNodeIds.has(childNode.id)) {
+        if (childNode.type === 'erc20-tokens') {
+          tokenNodes.push(childNode)
+          tokenNodeIds.add(childNode.id)
+        } else if (childNode.type === 'native-token') {
+          nativeTokenNodes.push(childNode)
+          tokenNodeIds.add(childNode.id)
+        }
+      }
+    }
+  }
+  
   // Keep backward compatibility with single node
   const tokenNode = tokenNodes[0]
   const nativeTokenNode = nativeTokenNodes[0]
