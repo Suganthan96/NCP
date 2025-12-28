@@ -8,6 +8,7 @@ import type { Edge } from "reactflow"
 export interface ExecutionContext {
   smartAccountNode?: WorkflowNode
   tokenNode?: WorkflowNode
+  nativeTokenNode?: WorkflowNode
   transferNode?: WorkflowNode
   operationType: 'erc20-transfer' | 'eth-transfer' | 'unknown'
   smartAccountAddress?: string
@@ -24,6 +25,8 @@ export interface PermissionParameters {
   tokenAddress?: string
   periodAmount?: string
   periodDuration?: number
+  decimals?: number
+  symbol?: string
 }
 
 /**
@@ -80,8 +83,9 @@ export function analyzeTransferContext(
   // Identify key nodes in the chain
   const smartAccountNode = parentChain.find(n => n.type === 'erc4337')
   const tokenNode = parentChain.find(n => n.type === 'erc20-tokens')
+  const nativeTokenNode = parentChain.find(n => n.type === 'native-token')
 
-  // Extract permission parameters from token node
+  // Extract permission parameters from token node or native token node
   let permissionParams: PermissionParameters | undefined
 
   if (tokenNode) {
@@ -92,9 +96,25 @@ export function analyzeTransferContext(
       amountLimit: tokenData.amountLimit,
       tokenAddress: tokenData.tokenAddress,
       periodAmount: tokenData.amount,
+      decimals: tokenData.decimals || 18, // Default to 18 if not set
+      symbol: tokenData.symbol,
       // Calculate period duration from start/end time if available
       periodDuration: tokenData.startTime && tokenData.endTime 
         ? (new Date(tokenData.endTime).getTime() - new Date(tokenData.startTime).getTime()) / 1000 
+        : 86400 // Default to 1 day
+    }
+  } else if (nativeTokenNode) {
+    const nativeData = nativeTokenNode.data as any
+    permissionParams = {
+      startTime: nativeData.startTime,
+      endTime: nativeData.endTime,
+      amountLimit: nativeData.amountLimit,
+      periodAmount: nativeData.amount,
+      decimals: 18, // ETH always uses 18 decimals
+      symbol: 'ETH',
+      // Calculate period duration from start/end time if available
+      periodDuration: nativeData.startTime && nativeData.endTime 
+        ? (new Date(nativeData.endTime).getTime() - new Date(nativeData.startTime).getTime()) / 1000 
         : 86400 // Default to 1 day
     }
   }
@@ -104,6 +124,8 @@ export function analyzeTransferContext(
   
   if (smartAccountNode && tokenNode) {
     operationType = 'erc20-transfer'
+  } else if (smartAccountNode && nativeTokenNode) {
+    operationType = 'eth-transfer'
   } else if (smartAccountNode) {
     operationType = 'eth-transfer'
   }
@@ -111,6 +133,7 @@ export function analyzeTransferContext(
   return {
     smartAccountNode,
     tokenNode,
+    nativeTokenNode,
     transferNode,
     operationType,
     smartAccountAddress: (smartAccountNode?.data as any)?.smartAccountAddress as string | undefined,

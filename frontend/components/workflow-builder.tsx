@@ -34,6 +34,7 @@ import { ConditionalNode } from "./nodes/conditional-node"
 import { CodeNode } from "./nodes/code-node"
 import { ERC4337Node } from "./nodes/erc4337-node"
 import { WalletBalanceNode } from "./nodes/wallet-balance-node"
+import { NativeTokenNode } from "./nodes/native-token-node"
 import { ERC20TokensNode } from "./nodes/erc20-tokens-node"
 import { FetchPriceNode } from "./nodes/fetch-price-node"
 import { WalletAnalyticsNode } from "./nodes/wallet-analytics-node"
@@ -68,6 +69,7 @@ const nodeTypes: NodeTypes = {
   code: CodeNode,
   "erc4337": ERC4337Node,
   "wallet-balance": WalletBalanceNode,
+  "native-token": NativeTokenNode,
   "erc20-tokens": ERC20TokensNode,
   "fetch-price": FetchPriceNode,
   "wallet-analytics": WalletAnalyticsNode,

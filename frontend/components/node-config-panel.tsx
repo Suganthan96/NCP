@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -9,6 +9,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { DateTimePicker } from "@/components/ui/date-time-picker"
+import { useChainId } from "wagmi"
+import { getTokenAddress, SUPPORTED_TOKENS, TOKEN_LIST } from "@/lib/token-addresses"
 import type { WorkflowNode } from "@/lib/types"
 import CodeEditor from "./code-editor"
 
@@ -20,6 +22,7 @@ interface NodeConfigPanelProps {
 
 export default function NodeConfigPanel({ node, updateNodeData, onClose }: NodeConfigPanelProps) {
   const [localData, setLocalData] = useState({ ...node.data })
+  const chainId = useChainId()
 
   const handleChange = (key: string, value: any) => {
     setLocalData((prev) => ({
@@ -28,6 +31,25 @@ export default function NodeConfigPanel({ node, updateNodeData, onClose }: NodeC
     }))
     updateNodeData(node.id, { [key]: value })
   }
+
+  // Auto-populate token address when symbol changes
+  useEffect(() => {
+    if (node.type === 'erc20-tokens' && (localData as any).symbol && chainId) {
+      const tokenSymbol = (localData as any).symbol?.toUpperCase()
+      const tokenAddress = getTokenAddress(tokenSymbol, chainId)
+      
+      if (tokenAddress && tokenAddress !== (localData as any).tokenAddress) {
+        console.log(`Auto-setting token address for ${tokenSymbol} on chain ${chainId}: ${tokenAddress}`)
+        handleChange('tokenAddress', tokenAddress)
+        
+        // Also set decimals
+        const tokenInfo = TOKEN_LIST[tokenSymbol]
+        if (tokenInfo) {
+          handleChange('decimals', tokenInfo.decimals)
+        }
+      }
+    }
+  }, [(localData as any).symbol, chainId, node.type])
 
   const renderInputFields = () => {
     switch (node.type) {
@@ -210,42 +232,57 @@ export default function NodeConfigPanel({ node, updateNodeData, onClose }: NodeC
         return (
           <>
             <div className="bg-blue-50 p-3 rounded-lg border border-blue-200 mb-4">
-              <p className="text-xs text-blue-900 font-semibold mb-1">📝 Required Configuration</p>
+              <p className="text-xs text-blue-900 font-semibold mb-1">🪙 Token Selection</p>
               <p className="text-xs text-gray-700">
-                The Token Contract Address is <strong>required</strong> for ERC-20 permissions. 
-                Without it, the system will default to native ETH transfers.
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="tokenAddress" className="flex items-center gap-1">
-                Token Contract Address <span className="text-red-500">*</span>
-              </Label>
-              <Input
-                id="tokenAddress"
-                value={(localData as any).tokenAddress || ""}
-                onChange={(e) => handleChange("tokenAddress", e.target.value)}
-                placeholder="0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
-                className={`font-mono text-xs ${!(localData as any).tokenAddress ? 'border-red-300 focus:border-red-500' : ''}`}
-              />
-              {!(localData as any).tokenAddress && (
-                <p className="text-xs text-red-600">
-                  ⚠️ Token address is required for ERC-20 permissions
-                </p>
-              )}
-              <p className="text-xs text-gray-500">
-                Example Sepolia USDC: 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238
+                Select a token symbol and the contract address will be automatically configured for your network.
               </p>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="symbol">Token Symbol</Label>
-              <Input
-                id="symbol"
+              <Select
                 value={(localData as any).symbol || ""}
-                onChange={(e) => handleChange("symbol", e.target.value)}
-                placeholder="USDC, DAI, etc."
+                onValueChange={(value) => handleChange("symbol", value)}
+              >
+                <SelectTrigger id="symbol">
+                  <SelectValue placeholder="Select token" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SUPPORTED_TOKENS.map((token) => (
+                    <SelectItem key={token} value={token}>
+                      {token} - {TOKEN_LIST[token].name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-gray-500">
+                Choose from popular ERC-20 tokens
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="tokenAddress" className="flex items-center gap-1">
+                Token Contract Address
+                {(localData as any).tokenAddress && (
+                  <span className="text-green-600 text-xs">✓ Auto-configured</span>
+                )}
+              </Label>
+              <Input
+                id="tokenAddress"
+                value={(localData as any).tokenAddress || "Not set - Select a token symbol"}
+                disabled
+                className="font-mono text-xs bg-gray-50"
               />
+              {(localData as any).symbol && !(localData as any).tokenAddress && (
+                <p className="text-xs text-amber-600">
+                  ⚠️ Token not available on current network (Chain ID: {chainId})
+                </p>
+              )}
+              {(localData as any).tokenAddress && (
+                <p className="text-xs text-green-600">
+                  ✅ Contract address configured for chain {chainId}
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -317,6 +354,73 @@ export default function NodeConfigPanel({ node, updateNodeData, onClose }: NodeC
               <p className="text-xs text-gray-700">
                 When connected with an ERC-4337 node, these time limits and amount restrictions
                 will be used to request permissions from MetaMask.
+              </p>
+            </div>
+          </>
+        )
+
+      case "native-token":
+        return (
+          <>
+            <div className="bg-purple-50 p-3 rounded-lg border border-purple-200 mb-4">
+              <p className="text-xs text-purple-900 font-semibold mb-1">⚡ Native Token (ETH)</p>
+              <p className="text-xs text-gray-700">
+                Configure permissions for native ETH transfers. No contract address needed.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="amount">Amount (per transaction)</Label>
+              <Input
+                id="amount"
+                type="number"
+                step="0.001"
+                value={(localData as any).amount || ""}
+                onChange={(e) => handleChange("amount", e.target.value)}
+                placeholder="0.01"
+              />
+              <p className="text-xs text-gray-500">ETH amount per transaction</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="amountLimit">Total ETH Limit</Label>
+              <Input
+                id="amountLimit"
+                type="number"
+                step="0.001"
+                value={(localData as any).amountLimit || ""}
+                onChange={(e) => handleChange("amountLimit", e.target.value)}
+                placeholder="0.1"
+              />
+              <p className="text-xs text-gray-500">
+                Maximum total ETH that can be transferred during the permission period
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4">
+              <div className="space-y-2">
+                <Label>Start Time</Label>
+                <DateTimePicker
+                  value={(localData as any).startTime || ""}
+                  onChange={(value) => handleChange("startTime", value)}
+                  placeholder="Select start time"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>End Time</Label>
+                <DateTimePicker
+                  value={(localData as any).endTime || ""}
+                  onChange={(value) => handleChange("endTime", value)}
+                  placeholder="Select end time"
+                />
+              </div>
+            </div>
+
+            <div className="bg-purple-50 p-3 rounded-lg border border-purple-200 mt-4">
+              <p className="text-xs text-purple-900 font-semibold mb-2">⏰ Permission Parameters</p>
+              <p className="text-xs text-gray-700">
+                When connected with an ERC-4337 node, these time limits and ETH amount restrictions
+                will be used to request permissions from MetaMask for native ETH transfers.
               </p>
             </div>
           </>

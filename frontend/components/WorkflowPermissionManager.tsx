@@ -132,13 +132,18 @@ export default function WorkflowPermissionManager({
       console.log('Token Address from params:', detectedParams.tokenAddress);
       console.log('Amount Limit:', detectedParams.amountLimit);
       console.log('Period Amount:', detectedParams.periodAmount);
+      console.log('Token Decimals:', detectedParams.decimals);
+      console.log('Token Symbol:', detectedParams.symbol);
 
       // Validate token address is set for ERC-20 transfers
       if (workflowType === 'erc20-transfer' && !detectedParams.tokenAddress) {
-        throw new Error('Token contract address is required for ERC-20 transfers. Please configure the token address in the ERC-20 Tokens node.');
+        throw new Error('Token contract address is required for ERC-20 transfers. Please select a token in the ERC-20 Tokens node.');
       }
 
       if (workflowType === 'erc20-transfer' && detectedParams.tokenAddress) {
+        // Use token decimals from the node configuration, default to 6 for common stablecoins
+        const tokenDecimals = detectedParams.decimals || 6;
+        
         // ERC-20 token permission
         permissionData = {
           chainId,
@@ -154,18 +159,18 @@ export default function WorkflowPermissionManager({
             type: "erc20-token-periodic",
             data: {
               tokenAddress: detectedParams.tokenAddress as `0x${string}`,
-              // Use parseUnits with 6 decimals for USDC (most ERC-20 tokens use 6 or 18 decimals)
-              // For USDC/USDT: 6 decimals, for most others: 18 decimals
-              // TODO: Fetch actual decimals from token contract
-              periodAmount: parseUnits(detectedParams.amountLimit || detectedParams.periodAmount || "0.001", 6),
+              // Use the correct decimals for the token (e.g., 6 for USDC/USDT, 18 for most others)
+              periodAmount: parseUnits(detectedParams.amountLimit || detectedParams.periodAmount || "0.001", tokenDecimals),
               periodDuration: detectedParams.periodDuration || 86400,
               startTime: startTimestamp,
-              justification: `Permission to transfer up to ${detectedParams.amountLimit || detectedParams.periodAmount} tokens from ${formatDate(detectedParams.startTime)} to ${formatDate(detectedParams.endTime)}`,
+              justification: `Permission to transfer up to ${detectedParams.amountLimit || detectedParams.periodAmount} ${detectedParams.symbol || 'tokens'} from ${formatDate(detectedParams.startTime)} to ${formatDate(detectedParams.endTime)}`,
             },
           },
         };
       } else {
-        // Native token (ETH) permission - fallback
+        // Native token (ETH) permission
+        const ethAmount = detectedParams?.amountLimit || detectedParams?.periodAmount || "0.01";
+        
         permissionData = {
           chainId,
           expiry,
@@ -179,9 +184,10 @@ export default function WorkflowPermissionManager({
           permission: {
             type: "native-token-periodic",
             data: {
-              periodAmount: parseEther(detectedParams.periodAmount || "0.001"),
-              periodDuration: detectedParams.periodDuration || 86400,
-              justification: `Permission to transfer ${detectedParams.periodAmount || "0.001"} ETH per period`,
+              periodAmount: parseEther(ethAmount),
+              periodDuration: detectedParams?.periodDuration || 86400,
+              startTime: startTimestamp,
+              justification: `Permission to transfer up to ${ethAmount} ETH from ${formatDate(detectedParams?.startTime)} to ${formatDate(detectedParams?.endTime)}`,
             },
           },
         };

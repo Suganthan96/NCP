@@ -19,7 +19,8 @@ import {
   BarChart3,
   Send,
   ArrowLeftRight,
-  Shield
+  Shield,
+  Zap
 } from "lucide-react"
 
 const nodeTypes = [
@@ -36,6 +37,13 @@ const nodeTypes = [
     description: "Get wallet balance",
     icon: <Wallet className="h-4 w-4 mr-2" />,
     category: "Wallet"
+  },
+  {
+    type: "native-token",
+    label: "Native Token (ETH)",
+    description: "Handle ETH transfers",
+    icon: <Zap className="h-4 w-4 mr-2" />,
+    category: "Tokens"
   },
   {
     type: "erc20-tokens",
