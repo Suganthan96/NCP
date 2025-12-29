@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Plus, Settings, Trash2, Copy, ArrowLeft, AlertCircle, CheckCircle, MessageCircle } from "lucide-react"
 import { useMetaMaskFlask } from "@/hooks/useMetaMaskFlask"
 import { MetaMaskDebugInfo } from "@/components/MetaMaskDebugInfo"
-import { getAgents, deleteAgent as deleteAgentUtil, duplicateAgent as duplicateAgentUtil } from "@/lib/agents-utils"
+import { getAgents, deleteAgent as deleteAgentUtil, duplicateAgent as duplicateAgentUtil, getNodeTypeSummary } from "@/lib/agents-utils"
 import type { Agent } from "@/lib/types"
 
 export default function AgentsPage() {
@@ -185,9 +185,33 @@ export default function AgentsPage() {
                   {agent.description}
                 </p>
 
-                <div className="flex items-center justify-between text-xs text-gray-500 mb-4">
-                  <span>{agent.nodeCount} nodes</span>
-                  <span>Modified {agent.lastModified.toLocaleDateString()}</span>
+                {/* Node Types Display */}
+                <div className="mb-4">
+                  <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
+                    <span>{agent.nodeCount} nodes</span>
+                    <span>Modified {agent.lastModified.toLocaleDateString()}</span>
+                  </div>
+                  
+                  {/* Show specific node types */}
+                  <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+                    {getNodeTypeSummary(agent.workflow).slice(0, 6).map((nodeType, index) => (
+                      <span
+                        key={index}
+                        className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200"
+                        title={`Contains ${nodeType} node${nodeType.includes('x') ? 's' : ''}`}
+                      >
+                        {nodeType}
+                      </span>
+                    ))}
+                    {getNodeTypeSummary(agent.workflow).length > 6 && (
+                      <span
+                        className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-50 text-gray-700 border border-gray-200"
+                        title={`And ${getNodeTypeSummary(agent.workflow).length - 6} more node types...`}
+                      >
+                        +{getNodeTypeSummary(agent.workflow).length - 6} more
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex gap-2">

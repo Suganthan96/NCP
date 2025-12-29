@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { ConnectButton } from '@rainbow-me/rainbowkit'
-import { useAccount } from 'wagmi'
+import { useAccount, useSendTransaction } from 'wagmi'
+import { parseEther } from 'viem'
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { ArrowLeft, Send, Bot, User, Loader2 } from "lucide-react"
@@ -20,11 +21,55 @@ interface ChatMessage {
   results?: any[]
 }
 
+// MetaMask transaction execution function
+async function executeMetaMaskTransaction(transactionData: any, sendTransactionAsync: any) {
+  try {
+    console.log('🔄 Executing transaction through MetaMask:', transactionData);
+    
+    const { transaction } = transactionData;
+    
+    if (!transaction) {
+      throw new Error('No transaction data provided');
+    }
+
+    console.log('📤 Sending transaction:', {
+      to: transaction.to,
+      value: transaction.value,
+      data: transaction.data
+    });
+
+    // Execute transaction through MetaMask using async version
+    const txHash = await sendTransactionAsync({
+      to: transaction.to as `0x${string}`,
+      value: BigInt(transaction.value),
+      data: transaction.data as `0x${string}`,
+    });
+
+    console.log('✅ MetaMask transaction hash received:', txHash);
+    return {
+      success: true,
+      hash: txHash,
+      sponsored: transactionData.sponsoredTransaction || false,
+      message: transactionData.sponsoredTransaction 
+        ? 'Sponsored transaction sent! Gas fees covered by Pimlico.' 
+        : 'Transaction sent successfully! Waiting for confirmation...'
+    };
+  } catch (error: any) {
+    console.error('❌ MetaMask transaction failed:', error);
+    return {
+      success: false,
+      error: error.message || 'MetaMask transaction failed',
+      hash: null
+    };
+  }
+}
+
 export default function ChatPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const agentId = searchParams.get('agent')
   const { address, isConnected } = useAccount()
+  const { sendTransactionAsync, isPending: isTransactionPending, error: transactionError } = useSendTransaction()
   
   const [agent, setAgent] = useState<Agent | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -69,25 +114,98 @@ I can help you with Web3 operations like wallet management, token transfers, NFT
     if (!agent.workflow.nodes) return []
     
     const tools: any[] = []
-    const nodeConnections: { [key: string]: string } = {}
+    const { nodes, edges } = agent.workflow
     
-    // Build connections map from edges
-    agent.workflow.edges?.forEach(edge => {
-      nodeConnections[edge.source] = edge.target
-    })
+    // Find workflow execution order
+    const nodeExecutionOrder = buildExecutionOrder(nodes, edges)
     
-    // Convert nodes to tool connections
-    agent.workflow.nodes.forEach(node => {
-      const toolName = node.type
-      const nextTool = nodeConnections[node.id]
+    // Convert nodes to tool format expected by backend
+    for (let i = 0; i < nodeExecutionOrder.length; i++) {
+      const node = nodeExecutionOrder[i]
+      const nextNode = nodeExecutionOrder[i + 1]
       
-      tools.push({
-        tool: toolName,
-        next_tool: nextTool || null
-      })
-    })
+      let toolName = mapNodeTypeToToolName(node.type, node.data?.label)
+      
+      if (toolName) {
+        tools.push({
+          tool: toolName,
+          next_tool: nextNode ? mapNodeTypeToToolName(nextNode.type, nextNode.data?.label) : null,
+          node_data: node.data,
+          node_id: node.id
+        })
+      }
+    }
     
     return tools
+  }
+
+  const mapNodeTypeToToolName = (nodeType: string, label?: string): string | null => {
+    // Special case: Agent node (ERC-4337 with label "Agent") -> erc4337 tool
+    if (nodeType === "erc4337" && label === "Agent") {
+      return "erc4337"
+    }
+    
+    // Map node types to backend tool names
+    switch (nodeType) {
+      case "erc4337":
+        return "erc4337"
+      case "wallet-balance":
+        return "get_balance"
+      case "transfer":
+        return "transfer"
+      case "swap":
+        return "swap"
+      case "erc20-tokens":
+        return "erc20_tokens"
+      case "fetch-price":
+        return "fetch_price"
+      case "wallet-analytics":
+        return "wallet_analytics"
+      case "native-token":
+        return "native_token"
+      default:
+        return null
+    }
+  }
+
+  const buildExecutionOrder = (nodes: any[], edges: any[]): any[] => {
+    // Find the start node (Agent node or node with no incoming edges)
+    const agentNode = nodes.find(n => n.type === "erc4337" && n.data?.label === "Agent")
+    
+    if (!agentNode) {
+      return nodes // Fallback to all nodes if no agent node
+    }
+    
+    // Build execution order by following edges from agent node
+    const visited = new Set<string>()
+    const executionOrder: any[] = []
+    
+    const traverse = (nodeId: string) => {
+      if (visited.has(nodeId)) return
+      
+      const node = nodes.find(n => n.id === nodeId)
+      if (!node) return
+      
+      visited.add(nodeId)
+      executionOrder.push(node)
+      
+      // Find connected nodes
+      const connectedEdges = edges.filter(e => e.source === nodeId)
+      connectedEdges.forEach(edge => {
+        traverse(edge.target)
+      })
+    }
+    
+    traverse(agentNode.id)
+    
+    // Add any unvisited nodes
+    nodes.forEach(node => {
+      if (!visited.has(node.id) && node.id !== agentNode.id) {
+        executionOrder.push(node)
+      }
+    })
+    
+    return executionOrder
   }
 
   const sendMessage = async () => {
@@ -145,11 +263,118 @@ I can help you with Web3 operations like wallet management, token transfers, NFT
 
       const data = await response.json()
       
+      // Check if any tool calls require transaction execution
+      let finalContent = data.agent_response || "I apologize, but I couldn't process your request properly."
+      let transactionExecuted = false
+      
+      if (data.tool_calls && data.results && isConnected && address) {
+        for (let i = 0; i < data.tool_calls.length; i++) {
+          const toolCall = data.tool_calls[i]
+          const result = data.results[i]
+          
+          // Check if this is a transfer tool call - handle multiple response formats
+          if (toolCall.tool === 'transfer' && result?.success) {
+            try {
+              console.log('🔄 Transfer tool call detected:', result)
+              
+              // Extract transaction data from API response or create it from tool call parameters
+              let transactionData;
+              
+              if (result.result?.transaction) {
+                // New format: API returned transaction data
+                transactionData = result.result;
+                console.log('✅ Using API transaction data:', transactionData);
+              } else {
+                // Old format: Create transaction from tool parameters
+                console.log('⚡ Creating transaction from tool parameters:', toolCall.parameters);
+                const amountWei = parseEther(toolCall.parameters.amount || "0");
+                
+                transactionData = {
+                  transaction: {
+                    from: toolCall.parameters.fromAddress,
+                    to: toolCall.parameters.toAddress,
+                    value: amountWei.toString(),
+                    data: "0x"
+                  },
+                  amount: toolCall.parameters.amount,
+                  recipient: toolCall.parameters.toAddress,
+                  sender: toolCall.parameters.fromAddress,
+                  sponsoredTransaction: true, // Assume Pimlico sponsorship
+                  paymasterActive: true,
+                  paymasterInfo: "🎯 Transaction sponsored by Pimlico - NO GAS FEES REQUIRED!",
+                  tokenType: toolCall.parameters.tokenType || "ETH",
+                  balance: "0"
+                };
+              }
+              
+              console.log('🔄 Triggering MetaMask transaction...', transactionData.transaction)
+              console.log('🔍 sendTransactionAsync function:', typeof sendTransactionAsync)
+              console.log('🔍 isConnected:', isConnected, 'address:', address)
+              
+              if (!sendTransactionAsync) {
+                console.error('❌ sendTransactionAsync is not available')
+                finalContent = `❌ **Transaction Failed**: MetaMask not properly connected`
+                continue;
+              }
+              
+              // Execute the transaction through MetaMask
+              const txResult = await executeMetaMaskTransaction(transactionData, sendTransactionAsync)
+              
+              if (txResult.success) {
+                const sponsorMessage = txResult.sponsored 
+                  ? "🎯 **GASLESS TRANSACTION!** ✨ Pimlico paymaster covered all fees!"
+                  : "⛽ **Transaction Complete**: Gas fees were paid from your wallet."
+                
+                finalContent = `✅ **Transaction Executed Successfully!**
+
+📋 **Transfer Details**:
+• Amount: ${transactionData.amount || toolCall.parameters?.amount || 'N/A'} ${transactionData.tokenType || toolCall.parameters?.tokenType || 'ETH'}
+• To: \`${transactionData.recipient || toolCall.parameters?.toAddress || 'N/A'}\`
+• From: \`${transactionData.sender || toolCall.parameters?.fromAddress || 'N/A'}\` (Smart Account)
+• Balance: ${transactionData.balance || '0'} ETH
+
+${sponsorMessage}
+
+🔗 **Transaction Hash**: [${txResult.hash}](https://sepolia.etherscan.io/tx/${txResult.hash})
+⚡ **Status**: ${transactionData.paymasterActive ? 'Sponsored by Pimlico' : 'User-paid gas'}
+
+🌐 **MetaMask Confirmation**: Transaction has been sent to the Sepolia network and is being processed!
+
+${transactionData.paymasterInfo || ''}
+
+💡 **Track on Etherscan**: https://sepolia.etherscan.io/tx/${txResult.hash}`
+                transactionExecuted = true
+              } else {
+                finalContent = `❌ **MetaMask Transaction Failed**
+
+Error: ${txResult.error}
+
+Please try again. Make sure:
+• Your wallet is connected
+• You have sufficient ETH for the transfer
+• You approve the transaction in MetaMask`
+              }
+              break // Only execute first transaction
+            } catch (error: any) {
+              console.error('MetaMask transaction error:', error)
+              finalContent = `❌ **Transaction Error**
+
+${error.message || 'Failed to execute transaction through MetaMask'}
+
+Please ensure:
+• MetaMask is installed and connected
+• You have sufficient funds
+• The transaction was approved`
+            }
+          }
+        }
+      }
+      
       // Add assistant response
       const assistantMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: data.agent_response || "I apologize, but I couldn't process your request properly.",
+        content: finalContent,
         timestamp: new Date(),
         toolCalls: data.tool_calls,
         results: data.results

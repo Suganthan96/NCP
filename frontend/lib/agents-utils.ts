@@ -155,3 +155,68 @@ export const generateAgentDescription = (workflow: Workflow): string => {
   
   return `Automates ${operationsText}${moreText} using ${nodeCount} connected nodes`
 }
+
+// Get node type summary from workflow
+export const getNodeTypeSummary = (workflow: Workflow): string[] => {
+  const nodeDescriptors: string[] = []
+  
+  workflow.nodes.forEach(node => {
+    // Check if this is an Agent node (ERC-4337 type with "Agent" label)
+    if (node.type === "erc4337" && node.data?.label === "Agent") {
+      nodeDescriptors.push("Agent")
+    } else {
+      // Use the regular node type
+      nodeDescriptors.push(node.type || "Unknown")
+    }
+  })
+  
+  // Count occurrences of each node descriptor
+  const typeCount = new Map<string, number>()
+  
+  nodeDescriptors.forEach(descriptor => {
+    typeCount.set(descriptor, (typeCount.get(descriptor) || 0) + 1)
+  })
+  
+  return Array.from(typeCount.entries()).map(([type, count]) => {
+    const displayName = getNodeTypeDisplayName(type)
+    return count > 1 ? `${count}x ${displayName}` : displayName
+  })
+}
+
+// Get user-friendly display name for node type
+const getNodeTypeDisplayName = (type: string): string => {
+  switch (type) {
+    case "input":
+      return "Input"
+    case "output":
+      return "Output"
+    case "process":
+      return "Process"
+    case "conditional":
+      return "Conditional"
+    case "code":
+      return "Code"
+    case "Agent":
+      return "Agent"
+    case "erc4337":
+      return "ERC-4337"
+    case "wallet-balance":
+      return "Wallet Balance"
+    case "native-token":
+      return "Native Token"
+    case "erc20-tokens":
+      return "ERC-20 Tokens"
+    case "erc721-nft":
+      return "ERC-721 NFTs"
+    case "fetch-price":
+      return "Fetch Price"
+    case "wallet-analytics":
+      return "Analytics"
+    case "transfer":
+      return "Transfer"
+    case "swap":
+      return "Swap"
+    default:
+      return type.charAt(0).toUpperCase() + type.slice(1)
+  }
+}
