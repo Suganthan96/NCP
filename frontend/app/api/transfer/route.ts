@@ -4,8 +4,12 @@ import {
   createWalletClient, 
   http, 
   parseEther, 
+  parseUnits,
   formatEther,
-  isAddress 
+  isAddress,
+  encodeFunctionData,
+  keccak256,
+  toHex
 } from "viem";
 import { sepolia } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
@@ -16,62 +20,62 @@ import {
 import {
   createBundlerClient,
   createPaymasterClient,
-  BundlerClient,
-  PaymasterClient
 } from "viem/account-abstraction";
-import {
-  createPimlicoClient
-} from "permissionless/clients/pimlico";
 
 // Sepolia testnet configuration
 const publicClient = createPublicClient({
   chain: sepolia,
-  transport: http(process.env.NEXT_PUBLIC_RPC_URL),
+  transport: http(process.env.NEXT_PUBLIC_RPC_URL || 'https://rpc.ankr.com/eth_sepolia'),
 });
 
 // Pimlico configuration
 const pimlicoKey = process.env.NEXT_PUBLIC_PIMLICO_API_KEY;
 
 if (!pimlicoKey) {
-  console.warn("Pimlico API key is not set. Paymaster sponsorship will not work.");
+  console.warn("⚠️ Pimlico API key is not set. Paymaster sponsorship will not work.");
 }
 
-const bundlerClient: BundlerClient = createBundlerClient({
+const bundlerClient = createBundlerClient({
+  client: publicClient,
   transport: http(
-    `https://api.pimlico.io/v2/11155111/rpc?apikey=${pimlicoKey}` // Sepolia chain ID
+    `https://api.pimlico.io/v2/11155111/rpc?apikey=${pimlicoKey}`
   ),
 });
 
-const paymasterClient: PaymasterClient = createPaymasterClient({
+const paymasterClient = createPaymasterClient({
   transport: http(
-    `https://api.pimlico.io/v2/11155111/rpc?apikey=${pimlicoKey}` // Sepolia chain ID
-  ),
-});
-
-const pimlicoClient = createPimlicoClient({
-  transport: http(
-    `https://api.pimlico.io/v2/11155111/rpc?apikey=${pimlicoKey}` // Sepolia chain ID
+    `https://api.pimlico.io/v2/11155111/rpc?apikey=${pimlicoKey}`
   ),
 });
 
 interface TransferRequest {
   fromAddress: string; // Smart account address
   toAddress: string;
-  amount: string; // In ETH, e.g., "0.001"
+  amount: string; // In ETH for native, or token amount for ERC-20
   tokenType?: "ETH" | "ERC20";
   tokenAddress?: string; // For ERC20 transfers
-  gasLimit?: string;
-  userAddress?: string; // Connected wallet address for authorization
+  tokenDecimals?: number; // For ERC20 transfers
+  userAddress: string; // Connected wallet address (EOA) - owner of smart account
+  nodeId: string; // Node ID used as salt for smart account creation
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body: TransferRequest = await request.json();
     
+    console.log('📨 Transfer request received:', {
+      from: body.fromAddress,
+      to: body.toAddress,
+      amount: body.amount,
+      tokenType: body.tokenType || 'ETH',
+      userAddress: body.userAddress,
+      nodeId: body.nodeId
+    });
+
     // Validate required fields
-    if (!body.fromAddress || !body.toAddress || !body.amount) {
+    if (!body.fromAddress || !body.toAddress || !body.amount || !body.nodeId) {
       return NextResponse.json(
-        { success: false, error: "Missing required fields: fromAddress, toAddress, and amount" },
+        { success: false, error: "Missing required fields: fromAddress, toAddress, amount, nodeId" },
         { status: 400 }
       );
     }
@@ -84,15 +88,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { toAddress, amount, tokenType = "ETH" } = body;
+    const { tokenType = "ETH" } = body;
 
-    console.log(`🔄 Processing ${tokenType} transfer:`);
-    console.log(`To: ${toAddress}`);
-    console.log(`Amount: ${amount} ${tokenType}`);
-
-    // Quick response for paymaster-sponsored transactions
     if (tokenType === "ETH") {
-      return await handleETHTransferQuick(body);
+      return await handleETHTransfer(body);
     } else if (tokenType === "ERC20") {
       return await handleERC20Transfer(body);
     } else {
@@ -114,79 +113,31 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function handleETHTransferQuick(body: TransferRequest) {
-  const { fromAddress, toAddress, amount } = body;
+async function handleETHTransfer(body: TransferRequest) {
+  const { fromAddress, toAddress, amount, nodeId } = body;
 
   try {
-    // Parse amount to wei
     const amountWei = parseEther(amount);
     
-    console.log(`💰 ETH Transfer Details:`);
-    console.log(`From: ${fromAddress} (Smart Account)`);
-    console.log(`To: ${toAddress}`);
-    console.log(`Amount: ${amount} ETH (${amountWei} wei)`);
+    console.log(`💰 Preparing ETH Transfer:`);
+    console.log(`├─ Smart Account: ${fromAddress}`);
+    console.log(`├─ Recipient: ${toAddress}`);
+    console.log(`├─ Amount: ${amount} ETH`);
+    console.log(`└─ Node ID (salt): ${nodeId}`);
 
-    // Quick balance check with timeout
-    const balancePromise = publicClient.getBalance({
-      address: fromAddress as `0x${string}`,
-    });
-    
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Balance check timeout')), 5000)
-    );
-
-    let balance;
-    try {
-      balance = await Promise.race([balancePromise, timeoutPromise]) as bigint;
-      console.log(`� Smart Account Balance: ${formatEther(balance)} ETH`);
-    } catch (error) {
-      console.log(`⚠️ Balance check failed, assuming Pimlico sponsorship`);
-      balance = BigInt(0); // Use BigInt(0) instead of 0n for better compatibility
-    }
-
-    // For Pimlico paymaster, assume sponsorship is available
-    const isSponsored = !!pimlicoKey;
-    
-    console.log(`${isSponsored ? '✅ Transaction will be sponsored by Pimlico paymaster' : '⚠️ User will pay gas fees'}`);
-
-    // Create the basic transaction call data
-    const callData = {
-      to: toAddress as `0x${string}`,
-      value: amountWei.toString(), // Convert BigInt to string
-      data: "0x" as `0x${string}`,
-    };
-
-    // Return immediate response for smart account execution
+    // Return transaction data for frontend to execute
+    // The frontend has access to the user's wallet and can sign the UserOperation
     return NextResponse.json({
       success: true,
       result: {
-        transaction: {
-          from: fromAddress,
-          to: toAddress,
-          value: amountWei.toString(), // Convert BigInt to string
-          data: "0x"
-        },
-        userOperation: {
-          sender: fromAddress,
-          callData: {
-            to: toAddress,
-            value: amountWei.toString(), // Convert BigInt to string
-            data: "0x"
-          },
-          sponsoredByPaymaster: isSponsored,
-          paymasterUrl: isSponsored ? `https://api.pimlico.io/v2/11155111/rpc?apikey=${pimlicoKey}` : null
-        },
+        type: "ETH",
+        from: fromAddress,
+        to: toAddress,
         amount: amount,
-        recipient: toAddress,
-        sender: fromAddress,
-        estimatedGas: "100000", // Default estimate
-        sponsoredTransaction: isSponsored,
-        paymasterInfo: isSponsored ? "🎯 Transaction sponsored by Pimlico - NO GAS FEES REQUIRED!" : "User pays gas",
-        networkName: "Sepolia Testnet",
-        tokenType: "ETH",
-        network: "sepolia",
-        balance: formatEther(balance),
-        paymasterActive: isSponsored
+        amountWei: amountWei.toString(),
+        nodeId: nodeId,
+        data: "0x", // Native ETH transfer has no data
+        message: "Transaction data prepared. Execute this transfer from the frontend using the user's wallet to sign the UserOperation."
       }
     });
 
@@ -203,7 +154,7 @@ async function handleETHTransferQuick(body: TransferRequest) {
 }
 
 async function handleERC20Transfer(body: TransferRequest) {
-  const { toAddress, amount, tokenAddress, fromAddress } = body;
+  const { fromAddress, toAddress, amount, tokenAddress, tokenDecimals = 18, nodeId } = body;
 
   if (!tokenAddress) {
     return NextResponse.json(
@@ -213,38 +164,56 @@ async function handleERC20Transfer(body: TransferRequest) {
   }
 
   try {
-    console.log(`🪙 ERC20 Transfer Details:`);
-    console.log(`Token: ${tokenAddress}`);
-    console.log(`From: ${fromAddress || "Smart Account"}`);
-    console.log(`To: ${toAddress}`);
-    console.log(`Amount: ${amount} tokens`);
-
-    // For demo purposes, simulate a successful ERC20 transfer
-    const simulatedTxHash = `0x${Math.random().toString(16).substring(2).padStart(64, '0')}`;
+    const amountWei = parseUnits(amount, tokenDecimals);
     
-    console.log(`✅ ERC20 transfer simulated successfully!`);
-    console.log(`Transaction hash: ${simulatedTxHash}`);
+    console.log(`🪙 Preparing ERC-20 Transfer:`);
+    console.log(`├─ Smart Account: ${fromAddress}`);
+    console.log(`├─ Token: ${tokenAddress}`);
+    console.log(`├─ Recipient: ${toAddress}`);
+    console.log(`├─ Amount: ${amount} tokens (${amountWei} raw)`);
+    console.log(`└─ Node ID (salt): ${nodeId}`);
 
+    // Encode ERC-20 transfer function call
+    const transferCalldata = encodeFunctionData({
+      abi: [
+        {
+          name: 'transfer',
+          type: 'function',
+          stateMutability: 'nonpayable',
+          inputs: [
+            { name: 'to', type: 'address' },
+            { name: 'amount', type: 'uint256' }
+          ],
+          outputs: [{ name: '', type: 'bool' }]
+        }
+      ],
+      functionName: 'transfer',
+      args: [toAddress as `0x${string}`, amountWei]
+    });
+
+    // Return transaction data for frontend to execute
     return NextResponse.json({
       success: true,
       result: {
-        txHash: simulatedTxHash,
-        from: fromAddress || "Smart Account",
-        to: toAddress,
+        type: "ERC20",
+        from: fromAddress,
+        to: tokenAddress, // For ERC-20, we call the token contract
+        recipient: toAddress, // Actual recipient is in the calldata
         amount: amount,
-        tokenType: "ERC20",
+        amountWei: amountWei.toString(),
+        nodeId: nodeId,
+        data: transferCalldata,
         tokenAddress: tokenAddress,
-        network: "sepolia",
-        status: "success"
+        tokenDecimals: tokenDecimals,
+        message: "Transaction data prepared. Execute this transfer from the frontend using the user's wallet to sign the UserOperation."
       }
     });
 
   } catch (error) {
-    console.error("❌ ERC20 transfer failed:", error);
-    return NextResponse.json(
+    console.error("❌ ERC-20 transfer preparation failed:", error);
       { 
         success: false, 
-        error: `ERC20 transfer failed: ${error instanceof Error ? error.message : "Unknown error"}` 
+        error: `ERC-20 transfer failed: ${error instanceof Error ? error.message : "Unknown error"}` 
       },
       { status: 500 }
     );

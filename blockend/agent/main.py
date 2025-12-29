@@ -42,7 +42,7 @@ user_data = {}
 TOOL_DEFINITIONS = {
     "transfer": {
         "name": "transfer",
-        "description": "Transfer tokens from one address to another using smart accounts. Supports ETH and ERC20 transfers.",
+        "description": "Transfer tokens from one address to another using smart accounts with ERC-7715 permissions. Supports ETH and ERC20 transfers.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -50,9 +50,12 @@ TOOL_DEFINITIONS = {
                 "toAddress": {"type": "string", "description": "Recipient wallet address"},
                 "amount": {"type": "string", "description": "Amount of tokens to transfer"},
                 "tokenType": {"type": "string", "description": "Type of token: ETH or ERC20"},
-                "tokenAddress": {"type": "string", "description": "Contract address of the token (for ERC20 only)"}
+                "tokenAddress": {"type": "string", "description": "Contract address of the token (for ERC20 only)"},
+                "tokenDecimals": {"type": "number", "description": "Token decimals (for ERC20 only, default: 18)"},
+                "userAddress": {"type": "string", "description": "Connected wallet address (EOA) that owns the smart account"},
+                "nodeId": {"type": "string", "description": "Node ID used as salt for smart account creation"}
             },
-            "required": ["toAddress", "amount", "tokenType"]
+            "required": ["fromAddress", "toAddress", "amount", "userAddress", "nodeId"]
         },
         "endpoint": "http://localhost:3000/api/transfer",
         "method": "POST"
@@ -207,12 +210,16 @@ class AgentRequest(BaseModel):
     execution_plan: Optional[Dict[str, Any]] = None
     workflow_structure: Optional[Dict[str, Any]] = None
     original_message: Optional[str] = None
+    user_wallet_address: Optional[str] = None  # Connected wallet (EOA)
+    smart_accounts: Optional[Dict[str, str]] = None  # Map of nodeId -> smartAccountAddress
 
 class ChatRequest(BaseModel):
     message: str
     agentId: str
     tools: Optional[List[dict]] = []
     private_key: Optional[str] = None
+    user_wallet_address: Optional[str] = None  # Connected wallet (EOA)
+    smart_accounts: Optional[Dict[str, str]] = None  # Map of nodeId -> smartAccountAddress
 
 class AgentResponse(BaseModel):
     agent_response: str
@@ -706,15 +713,21 @@ async def chat_with_agent_simple(request: AgentRequest):
         smart_accounts = {}
         workflow_context = ""
         
+        # First, try to get smart accounts from request (sent by frontend)
+        if request.smart_accounts and isinstance(request.smart_accounts, dict):
+            smart_accounts = request.smart_accounts
+            print(f"📊 Smart accounts from request: {smart_accounts}")
+        
         if request.execution_plan and isinstance(request.execution_plan, dict):
             execution_steps = request.execution_plan.get("execution_steps", [])
             
-            # Extract smart accounts from execution steps
-            for step in execution_steps:
-                if isinstance(step, dict) and "smart_account" in step:
-                    sa_address = step.get("smart_account")
-                    if sa_address:
-                        smart_accounts[f"step_{step.get('step', 0)}"] = sa_address
+            # Extract smart accounts from execution steps (fallback if not in request)
+            if not smart_accounts:
+                for step in execution_steps:
+                    if isinstance(step, dict) and "smart_account" in step:
+                        sa_address = step.get("smart_account")
+                        if sa_address:
+                            smart_accounts[f"step_{step.get('step', 0)}"] = sa_address
             
             # Build workflow context info (don't return, just prepare it)
             if execution_steps:
@@ -771,36 +784,51 @@ async def chat_with_agent_simple(request: AgentRequest):
                 
                 steps_info = "\n".join([f"• {desc}" for desc in enhanced_steps])
                 
-                # Get the smart account address
-                primary_sa = list(smart_accounts.values())[0] if smart_accounts else "Not found"
+                # Get the smart account address and node ID
+                primary_sa = list(smart_accounts.values())[0] if smart_accounts else None
+                primary_node_id = list(smart_accounts.keys())[0] if smart_accounts else None
                 
-                # Execute the actual transfer
+                print(f"📊 Transfer info: recipient={user_recipient}, amount={user_amount}")
+                print(f"📊 Smart account: {primary_sa}, Node ID: {primary_node_id}")
+                print(f"📊 User wallet: {request.user_wallet_address}")
+                
+                # Check if we have all required information
+                if not primary_sa or not primary_node_id:
+                    return {
+                        "agent_response": f"⚠️ **Smart Account Not Found**\n\n📋 **What I found**:\n{steps_info if execution_steps else 'No execution steps'}\n\n💡 **Tip**: Make sure your workflow has an ERC-4337 Account node with a smart account created.",
+                        "tool_calls": [],
+                        "results": []
+                    }
+                
+                if not request.user_wallet_address:
+                    return {
+                        "agent_response": f"⚠️ **Wallet Not Connected**\n\n💡 **Tip**: Please connect your wallet to execute transfers.\n\n📋 **Ready to transfer**:\n• Amount: {user_amount} {user_token.upper()}\n• To: {user_recipient}\n• From: {primary_sa}",
+                        "tool_calls": [],
+                        "results": []
+                    }
+                
+                # Prepare transfer data for frontend execution
                 if user_recipient and user_amount:
                     transfer_params = {
                         "fromAddress": primary_sa,  # Smart account address
                         "toAddress": user_recipient,
                         "amount": user_amount,
                         "tokenType": "ETH" if user_token.lower() == "eth" else "ERC20",
-                        "tokenAddress": "0x0000000000000000000000000000000000000000" if user_token.lower() == "eth" else None
+                        "tokenAddress": "0x0000000000000000000000000000000000000000" if user_token.lower() == "eth" else None,
+                        "nodeId": primary_node_id  # Node ID used as salt
                     }
                     
-                    print(f"🚀 Executing transfer with params: {transfer_params}")
-                    result = execute_tool("transfer", transfer_params)
+                    print(f"📦 Prepared transfer data: {transfer_params}")
                     
-                    if result["success"]:
-                        return {
-                            "agent_response": f"✅ **Transfer Executed Successfully!**\n\n💸 Amount: **{user_amount} {user_token.upper()}**\n📍 To: `{user_recipient}`\n🔐 From Smart Account: `{primary_sa}`\n\n📝 **Transaction Details**:\n{steps_info}\n\n✨ **Status**: Transfer completed using ERC-4337 smart account",
-                            "tool_calls": [{"tool": "transfer", "parameters": transfer_params}],
-                            "results": [result],
-                            "execution_plan": request.execution_plan
-                        }
-                    else:
-                        return {
-                            "agent_response": f"❌ **Transfer Failed**\n\n**Error**: {result.get('error', 'Unknown error')}\n\n📋 **Attempted Transfer**:\n• Amount: {user_amount} {user_token.upper()}\n• To: `{user_recipient}`\n• From: `{primary_sa}`\n\n💡 **What to check**:\n- Smart account has sufficient balance\n- Network connectivity\n- Valid recipient address",
-                            "tool_calls": [{"tool": "transfer", "parameters": transfer_params}],
-                            "results": [result],
-                            "execution_plan": request.execution_plan
-                        }
+                    # Return transfer data for frontend to execute
+                    # Frontend will reconstruct smart account and sign the UserOperation
+                    return {
+                        "agent_response": f"✅ **Ready to Execute Transfer!**\n\n💸 Amount: **{user_amount} {user_token.upper()}**\n📍 To: `{user_recipient}`\n🔐 From Smart Account: `{primary_sa}`\n\n📝 **Transfer Details**:\n{steps_info}\n\n🔐 **Status**: Transfer prepared. Please sign the transaction in your wallet to execute.",
+                        "tool_calls": [{"tool": "transfer", "parameters": transfer_params}],
+                        "transfer_data": transfer_params,  # Frontend will use this to execute
+                        "requires_user_signature": True,  # Signal that frontend needs to handle this
+                        "execution_plan": request.execution_plan
+                    }
                 else:
                     return {
                         "agent_response": f"✅ **Ready to Execute Transfer!**\n\n📋 **Transfer Details**:\n{steps_info}\n\n🔐 **Smart Account**: `{primary_sa}`{workflow_context}\n\n💡 **Configuration**:\n- ✅ Smart account created and ready\n- ✅ Recipient: `{user_recipient or 'Not specified'}`\n- ✅ Amount: {user_amount} {user_token.upper() if user_amount else 'Not specified'}\n- ✅ Using ERC-4337 for gasless transactions\n\n🚀 **Missing**: Please specify both recipient address and amount in your message.\n\n📝 **Example**: \"Transfer 0.1 ETH to 0x9E239687ED8Fd4d79C781cA408E12bd209BC7762\"",

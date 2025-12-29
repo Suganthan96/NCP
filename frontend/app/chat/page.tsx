@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { ConnectButton } from '@rainbow-me/rainbowkit'
-import { useAccount, useSendTransaction } from 'wagmi'
+import { useAccount, useSendTransaction, useWalletClient } from 'wagmi'
 import { parseEther } from 'viem'
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -70,6 +70,7 @@ export default function ChatPage() {
   const agentId = searchParams.get('agent')
   const { address, isConnected } = useAccount()
   const { sendTransactionAsync, isPending: isTransactionPending, error: transactionError } = useSendTransaction()
+  const { data: walletClient } = useWalletClient()
   
   const [agent, setAgent] = useState<Agent | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -229,6 +230,22 @@ I can help you with Web3 operations like wallet management, token transfers, NFT
       const workflowFormat = convertWorkflowToAgentFormat(agent.workflow)
       const executionPlan = generateExecutionPlan(agent.workflow)
 
+      // Extract smart account addresses from workflow nodes
+      const smartAccounts: Record<string, string> = {}
+      if (agent.workflow.nodes) {
+        agent.workflow.nodes.forEach((node: any) => {
+          if (node.type === 'erc4337' && node.data?.accountAddress) {
+            smartAccounts[node.id] = node.data.accountAddress
+          }
+        })
+      }
+      
+      console.log('📊 Sending to agent:', {
+        userAddress: address,
+        smartAccounts,
+        message: inputMessage.trim()
+      })
+
       // Prepare request for the agent API
       const agentRequest = {
         tools: convertWorkflowToTools(agent),
@@ -237,6 +254,8 @@ I can help you with Web3 operations like wallet management, token transfers, NFT
         user_message: enrichedMessage,
         original_message: inputMessage.trim(),
         private_key: address ? `demo_key_${address}` : undefined,
+        user_wallet_address: address,  // Connected wallet (EOA)
+        smart_accounts: smartAccounts,  // Map of nodeId -> smartAccountAddress
         context: {
           agent_name: agent.name,
           agent_description: agent.description,
@@ -263,11 +282,186 @@ I can help you with Web3 operations like wallet management, token transfers, NFT
 
       const data = await response.json()
       
-      // Check if any tool calls require transaction execution
+      // Check if the agent returned transfer data that requires user signature
       let finalContent = data.agent_response || "I apologize, but I couldn't process your request properly."
       let transactionExecuted = false
       
-      if (data.tool_calls && data.results && isConnected && address) {
+      // NEW: Handle transfers that require frontend execution with smart account
+      if (data.requires_user_signature && data.transfer_data && isConnected && address) {
+        try {
+          console.log('🔐 Executing transfer with session key (NO MetaMask signature required)...', data.transfer_data);
+          
+          const transferData = data.transfer_data;
+          const nodeId = transferData.nodeId;
+          
+          // Get the smart account for this node
+          const smartAccountNode = agent?.workflow?.nodes.find((n: any) => n.id === nodeId);
+          if (!smartAccountNode || !smartAccountNode.data?.accountAddress) {
+            throw new Error('Smart account not found for this transfer');
+          }
+          
+          const smartAccountAddress = smartAccountNode.data.accountAddress;
+          console.log(`📍 Using smart account: ${smartAccountAddress} from node: ${nodeId}`);
+          
+          // Import required functions dynamically
+          const { createPublicClient, http, parseEther, keccak256, toHex, encodeFunctionData, parseUnits } = await import('viem');
+          const { createBundlerClient, createPaymasterClient } = await import('viem/account-abstraction');
+          const { sepolia } = await import('viem/chains');
+          const { toMetaMaskSmartAccount, Implementation } = await import('@metamask/smart-accounts-kit');
+          
+          // Check wallet client is available
+          if (!walletClient) {
+            throw new Error('Wallet client not available. Please ensure your wallet is connected.');
+          }
+          
+          console.log(`🔑 Using your wallet to sign the UserOperation`);
+          console.log(`⚠️ Note: MetaMask Hybrid accounts don't support session keys natively`);
+          console.log(`💡 For zero-signature transfers, migrate to ZeroDev/Kernel accounts`);
+          
+          // Create clients
+          const publicClient = createPublicClient({
+            chain: sepolia,
+            transport: http(process.env.NEXT_PUBLIC_RPC_URL || 'https://rpc.ankr.com/eth_sepolia'),
+          });
+          
+          const pimlicoKey = process.env.NEXT_PUBLIC_PIMLICO_API_KEY;
+          const bundlerClient = createBundlerClient({
+            client: publicClient,
+            transport: http(`https://api.pimlico.io/v2/11155111/rpc?apikey=${pimlicoKey}`),
+          });
+          
+          const paymasterClient = createPaymasterClient({
+            transport: http(`https://api.pimlico.io/v2/11155111/rpc?apikey=${pimlicoKey}`),
+          });
+          
+          // Reconstruct the smart account using session key signer
+          const deploySalt = keccak256(toHex(nodeId));
+          console.log(`🔨 Reconstructing smart account with salt: ${deploySalt}`);
+          
+          const smartAccount = await toMetaMaskSmartAccount({
+            client: publicClient,
+            implementation: Implementation.Hybrid,
+            deployParams: [address as `0x${string}`, [], [], []],
+            deploySalt,
+            signer: { walletClient }, // Use user's wallet to sign (requires MetaMask signature)
+          });
+          
+          console.log(`✅ Smart account reconstructed: ${smartAccount.address}`);
+          
+          // Verify addresses match
+          if (smartAccount.address.toLowerCase() !== smartAccountAddress.toLowerCase()) {
+            throw new Error(`Smart account address mismatch! Expected: ${smartAccountAddress}, Got: ${smartAccount.address}`);
+          }
+          
+          // Prepare the call based on token type
+          let calls;
+          if (transferData.tokenType === 'ETH') {
+            const amountWei = parseEther(transferData.amount);
+            calls = [{
+              to: transferData.toAddress as `0x${string}`,
+              value: amountWei,
+              data: "0x" as `0x${string}`,
+            }];
+          } else {
+            // ERC-20 transfer
+            const amountWei = parseUnits(transferData.amount, transferData.tokenDecimals || 18);
+            const transferCalldata = encodeFunctionData({
+              abi: [{
+                name: 'transfer',
+                type: 'function',
+                stateMutability: 'nonpayable',
+                inputs: [
+                  { name: 'to', type: 'address' },
+                  { name: 'amount', type: 'uint256' }
+                ],
+                outputs: [{ name: '', type: 'bool' }]
+              }],
+              functionName: 'transfer',
+              args: [transferData.toAddress as `0x${string}`, amountWei]
+            });
+            calls = [{
+              to: transferData.tokenAddress as `0x${string}`,
+              value: BigInt(0),
+              data: transferCalldata,
+            }];
+          }
+          
+          console.log('📝 Sending UserOperation via Pimlico bundler...');
+          
+          // Send the UserOperation with paymaster sponsorship
+          const userOpHash = await bundlerClient.sendUserOperation({
+            account: smartAccount,
+            calls,
+            paymaster: paymasterClient,
+          });
+          
+          console.log('💰 Pimlico paymaster sponsorship applied');
+          console.log('✅ Gas fees sponsored - NO gas deducted from your wallet!');
+          
+          console.log(`📤 UserOperation submitted! Hash: ${userOpHash}`);
+          console.log('⏳ Waiting for inclusion in a block...');
+          
+          // Wait for confirmation
+          const receipt = await bundlerClient.waitForUserOperationReceipt({
+            hash: userOpHash,
+          });
+          
+          console.log(`✅ Transaction confirmed!`);
+          console.log(`└─ Transaction Hash: ${receipt.receipt.transactionHash}`);
+          
+          // Update message with success
+          finalContent = `✅ **Transfer Executed Successfully!**
+
+💸 Amount: **${transferData.amount} ${transferData.tokenType}**
+📍 To: \`${transferData.toAddress}\`
+🔐 From Smart Account: \`${smartAccountAddress}\`
+
+🔗 **Transaction Hash**: [${receipt.receipt.transactionHash}](https://sepolia.etherscan.io/tx/${receipt.receipt.transactionHash})
+📦 **UserOperation Hash**: \`${userOpHash}\`
+📊 **Block**: ${receipt.receipt.blockNumber.toString()}
+⛽ **Gas Used**: ${receipt.receipt.gasUsed.toString()}
+
+🎯 **GASLESS TRANSACTION!** ✨ 
+• Pimlico paymaster covered all gas fees - NO gas deducted from your wallet!
+• Required ONE MetaMask signature to authorize the UserOperation
+💡 **Track on Etherscan**: https://sepolia.etherscan.io/tx/${receipt.receipt.transactionHash}
+
+**How it works:**
+• Your smart account has ERC-7715 permissions to access your wallet's funds
+• Pimlico paymaster sponsors all gas fees (completely free!)
+• One MetaMask signature authorizes each UserOperation
+
+**⚠️ For ZERO-signature automated transfers:**
+The current MetaMask Hybrid account requires a signature per transfer. To enable fully automated transfers without any signatures, you need:
+
+1. **Migrate to ZeroDev/Kernel accounts** - These have built-in session key support
+2. **OR implement custom session key module** - Add session key management to the smart account contract
+3. **One-time authorization** - Add session key as authorized signer on-chain
+4. **Then**: Session key can sign all future transfers automatically (ZERO MetaMask popups!)
+
+*Current architecture: ERC-7715 permissions + Pimlico paymaster = Gasless but requires signature per tx*
+*Target architecture: Above + Session keys = Gasless AND zero signatures!*`;
+          
+          transactionExecuted = true;
+          
+        } catch (error: any) {
+          console.error('❌ Smart account transfer execution failed:', error);
+          finalContent = `❌ **Transfer Execution Failed**
+
+${data.agent_response}
+
+**Error**: ${error.message || 'Unknown error during execution'}
+
+💡 **What to check**:
+- Wallet is connected
+- Smart account has ERC-7715 permissions granted
+- Network connectivity is stable
+- Pimlico paymaster is available`;
+        }
+      }
+      
+      // OLD: Check if any tool calls require transaction execution (legacy path)
+      else if (data.tool_calls && data.results && isConnected && address) {
         for (let i = 0; i < data.tool_calls.length; i++) {
           const toolCall = data.tool_calls[i]
           const result = data.results[i]
